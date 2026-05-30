@@ -270,13 +270,14 @@ def build_argv(spec: SandboxSpec, *, etc_dir: str | os.PathLike[str]) -> list[st
     return argv
 
 
-def run(spec: SandboxSpec, *, sse_port: int | None = None, gateway: str | None = None) -> int:
+def run(spec: SandboxSpec, *, ports=(), gateway: str | None = None) -> int:
     """Boot the sandbox for *spec* under an isolated network and wait for it.
 
     ``pasta`` is the parent: it creates the isolated network namespace (outbound
-    NAT + DNS forwarding, optionally forwarding one IDE SSE port), then spawns the
-    ``bwrap`` sandbox inside it. The synthesized ``resolv.conf`` is pointed at
-    pasta's gateway. Returns the sandbox process's exit code.
+    NAT + DNS forwarding, forwarding each host-loopback port in *ports* -- the IDE
+    SSE port plus any MCP server ports), then spawns the ``bwrap`` sandbox inside
+    it. The synthesized ``resolv.conf`` is pointed at pasta's gateway. Returns the
+    sandbox process's exit code.
     """
     from . import net
 
@@ -291,5 +292,5 @@ def run(spec: SandboxSpec, *, sse_port: int | None = None, gateway: str | None =
 
     with tempfile.TemporaryDirectory(prefix="claude-sandbox-etc.") as etc_dir:
         inner = build_argv(spec, etc_dir=etc_dir)
-        argv = net.wrap_argv(inner, gateway=gw, sse_port=sse_port)
+        argv = net.wrap_argv(inner, gateway=gw, ports=ports)
         return subprocess.run(argv).returncode

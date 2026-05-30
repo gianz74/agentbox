@@ -15,9 +15,10 @@ Network posture:
   forward to the host's real resolver, which is what the synthesized
   ``/etc/resolv.conf`` points at. This works even when the host uses a loopback
   stub resolver (otherwise unreachable from inside the namespace).
-* ``-T <port>`` forwards exactly one port from the namespace loopback out to the
-  host's loopback -- used to reach an IDE's local MCP/SSE server without exposing
-  any other host service.
+* ``-T <port>`` forwards a single port from the namespace loopback out to the
+  host's loopback. One is emitted per host-loopback MCP port the editor named (the
+  SSE/ws port plus any streamable-HTTP MCP servers), so the sandbox reaches the
+  editor's local servers without exposing any other host service.
 
 ``--die-with-parent`` on the sandbox plus pasta's foreground mode (``-f``) make
 pasta exit when the (ephemeral) sandbox does.
@@ -91,13 +92,16 @@ def sse_port_from_env(env: "os._Environ[str] | dict[str, str] | None" = None) ->
 
 
 def wrap_argv(
-    inner_argv: list[str], *, gateway: str, sse_port: int | None = None
+    inner_argv: list[str], *, gateway: str, ports=()
 ) -> list[str]:
     """Wrap *inner_argv* (the sandbox command) so ``pasta`` is its parent.
 
     Builds ``pasta --config-net -f -q --no-map-gw --dns-forward <gateway>
-    [-T <sse_port>] -- <inner_argv...>``: pasta sets up the isolated netns, then
-    runs the sandbox inside it.
+    [-T <port>]... -- <inner_argv...>``: pasta sets up the isolated netns, then
+    runs the sandbox inside it. *ports* is the iterable of host-loopback ports to
+    forward (the IDE SSE port plus any MCP server ports); one ``-T`` is emitted per
+    distinct port, in first-seen order, with ``None`` entries and duplicates
+    dropped.
     """
     argv = [
         PASTA,
@@ -108,7 +112,11 @@ def wrap_argv(
         "--dns-forward",
         gateway,
     ]
-    if sse_port is not None:
-        argv += ["-T", str(sse_port)]
+    seen: set[int] = set()
+    for port in ports:
+        if port is None or port in seen:
+            continue
+        seen.add(port)
+        argv += ["-T", str(port)]
     argv += ["--", *inner_argv]
     return argv

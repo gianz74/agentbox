@@ -77,6 +77,76 @@ def test_stage_no_mcp_args_is_identity(tmp_path):
     assert binds == ()
 
 
+# --- --mcp-config loopback-port discovery ------------------------------------
+
+def _inline(servers):
+    return json.dumps({"mcpServers": servers})
+
+
+def test_loopback_ports_from_inline_json():
+    cfg = _inline({"emacs-tools": {"type": "http", "url": "http://localhost:43055/mcp/x"}})
+    assert mcp.loopback_mcp_ports(["--mcp-config", cfg, "--print"]) == [43055]
+
+
+def test_loopback_ports_from_file(tmp_path):
+    cfg = tmp_path / "servers.json"
+    cfg.write_text(_inline({"t": {"url": "http://127.0.0.1:7000/mcp"}}))
+    assert mcp.loopback_mcp_ports([f"--mcp-config={cfg}"]) == [7000]
+
+
+def test_loopback_ports_multiple_servers_deduped_in_order():
+    cfg = _inline({
+        "a": {"url": "http://localhost:5000/"},
+        "b": {"url": "http://127.0.0.1:6000/"},
+        "c": {"url": "http://localhost:5000/again"},  # duplicate port -> dropped
+    })
+    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 6000]
+
+
+def test_loopback_ports_accepts_all_loopback_spellings():
+    cfg = _inline({
+        "a": {"url": "http://localhost:5000/"},
+        "b": {"url": "http://127.0.0.1:5001/"},
+        "c": {"url": "http://[::1]:5002/"},
+    })
+    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 5001, 5002]
+
+
+def test_loopback_ports_scheme_default_when_absent():
+    cfg = _inline({
+        "h": {"url": "http://localhost/mcp"},     # -> 80
+        "s": {"url": "https://127.0.0.1/mcp"},    # -> 443
+    })
+    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [80, 443]
+
+
+def test_loopback_ports_skips_non_loopback():
+    cfg = _inline({
+        "lan": {"url": "http://10.255.255.1:8888/mcp"},
+        "pub": {"url": "https://example.com:9999/mcp"},
+        "ok": {"url": "http://localhost:43055/mcp"},
+    })
+    # Only the loopback URL is forwarded; the LAN/public hosts must not leak.
+    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [43055]
+
+
+def test_loopback_ports_skips_malformed_and_missing():
+    missing = "/no/such/file.json"
+    not_json = "{not json"
+    no_url = _inline({"x": {"type": "stdio", "command": "foo"}})
+    bad_shape = json.dumps({"mcpServers": "nope"})
+    assert mcp.loopback_mcp_ports([
+        "--mcp-config", missing,
+        "--mcp-config", not_json,
+        "--mcp-config", no_url,
+        "--mcp-config", bad_shape,
+    ]) == []
+
+
+def test_loopback_ports_none_without_mcp_config():
+    assert mcp.loopback_mcp_ports(["--print", "hi"]) == []
+
+
 # --- lockfile reconciliation --------------------------------------------------
 
 def test_lockfile_path():
