@@ -121,7 +121,7 @@ spec = SandboxSpec(
     },
     chdir="/work",
 )
-sys.exit(sandbox.run(spec, sse_port=sse, gateway=gw))
+sys.exit(sandbox.run(spec, ports=[sse], gateway=gw))
 PY
 rc=$?
 [ "$rc" -eq 0 ] || fatal "sandbox launch failed (pasta/bwrap rc=$rc)"

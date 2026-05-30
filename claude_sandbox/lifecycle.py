@@ -780,11 +780,13 @@ def run(
     collide on a shared path; mounts and environment are read fresh per launch, so
     a ``config.toml`` edit takes effect on the next launch with no rebuild.
 
-    When an editor exports an SSE port (surfaced here as *sse_port*), pasta
-    forwards exactly that one port into the sandbox and claude runs behind a
-    bootstrap that reconciles the IDE lockfile with the sandbox's pid namespace;
-    ``--mcp-config`` file operands are staged so their host paths resolve inside. A
-    non-IDE launch skips all of this.
+    When an editor exports an SSE port (surfaced here as *sse_port*), claude runs
+    behind a bootstrap that reconciles the IDE lockfile with the sandbox's pid
+    namespace. pasta forwards every host-loopback MCP port the editor named -- that
+    SSE/ws port plus any streamable-HTTP server ports parsed from the
+    ``--mcp-config`` operands -- so each editor channel reaches its host server;
+    ``--mcp-config`` file operands are also staged so their host paths resolve
+    inside. A non-IDE launch skips all of this.
 
     *mounts* are ad-hoc per-session binds (objects with ``path``/``ro``) consumed
     ahead of the store binds. The remaining keyword arguments override the
@@ -813,6 +815,13 @@ def run(
     if sse_port is None:
         sse_port = net.sse_port_from_env(host_env)
 
+    # Every host-loopback MCP port the editor named has to be forwarded: the SSE/ws
+    # port from the environment plus the streamable-HTTP server ports carried in
+    # the `--mcp-config` operands. pasta forwards one per distinct port.
+    forward_ports = [
+        p for p in (sse_port, *mcp.loopback_mcp_ports(claude_args)) if p is not None
+    ]
+
     # The launcher and MCP staging directories hold per-launch files bound into
     # the sandbox; both must outlive the launch (the bind sources are read when
     # the sandbox starts), so they wrap the whole boot.
@@ -836,4 +845,4 @@ def run(
             path=sl.path,
             chdir=resolution.cwd,
         )
-        return sandbox.run(spec, sse_port=sse_port, gateway=gateway)
+        return sandbox.run(spec, ports=forward_ports, gateway=gateway)

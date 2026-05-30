@@ -21,15 +21,19 @@ sandboxed ``claude`` to connect back:
   with a trailing slash that ``claude``'s exact ``getcwd()`` compare never has),
   and only then execs ``claude``. The sentinel dies with the ephemeral sandbox.
 
-The single cross-boundary network path -- the SSE port itself -- is forwarded by
-:mod:`claude_sandbox.net` with ``pasta -T``; everything here is the staging and
-lockfile reconciliation around it.
+The cross-boundary network paths -- the SSE/ws port and any streamable-HTTP MCP
+ports the editor names in ``--mcp-config`` -- are forwarded by
+:mod:`claude_sandbox.net` with one ``pasta -T`` each;
+:func:`loopback_mcp_ports` discovers the latter. Everything else here is the
+staging and lockfile reconciliation around them.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+from urllib.parse import urlparse
 
 from .sandbox import Bind
 
@@ -38,6 +42,14 @@ MCP_STAGE_DIR = "/run/claude-sandbox/mcp"
 
 _MCP_FLAG = "--mcp-config"
 _MCP_FLAG_EQ = "--mcp-config="
+
+#: Hostnames whose MCP ports are safe to forward: the loopback the editor's own
+#: servers bind. A non-loopback host (a LAN/public address) is never forwarded --
+#: doing so would breach the host-localhost isolation the sandbox enforces.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+#: Port assumed for an MCP URL that names none, keyed by scheme.
+_SCHEME_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 # --- --mcp-config staging ----------------------------------------------------
@@ -97,6 +109,100 @@ def stage_mcp_configs(
         (Bind(stage_dir, MCP_STAGE_DIR, mode="ro"),) if staged else ()
     )
     return tuple(out), binds
+
+
+# --- --mcp-config loopback-port discovery ------------------------------------
+
+# The editor drives more than one MCP channel: besides the ``ide`` WebSocket on
+# ``CLAUDE_CODE_SSE_PORT`` it injects per-session streamable-HTTP servers as
+# ``--mcp-config`` operands, each a ``mcpServers.<name>.url`` on a fresh
+# host-loopback port. Every such port the editor names has to be forwarded into
+# the sandbox too, or the channel fails with ``ConnectionRefused``. Only the
+# editor-supplied loopback ports are collected here -- the same trust boundary as
+# the SSE port -- so a non-loopback URL stays unreachable.
+
+
+def _mcp_config_values(claude_args):
+    """Yield each ``--mcp-config`` operand value, spaced or ``=`` form alike."""
+    expect_value = False
+    for arg in claude_args:
+        if expect_value:
+            yield arg
+            expect_value = False
+        elif arg == _MCP_FLAG:
+            expect_value = True
+        elif arg.startswith(_MCP_FLAG_EQ):
+            yield arg[len(_MCP_FLAG_EQ):]
+
+
+def _config_json_text(value: str) -> str | None:
+    """The JSON text of a ``--mcp-config`` operand: the inline value itself, or a
+    real file's contents. ``None`` for a missing/unreadable path (claude surfaces
+    its own error for that)."""
+    if _is_inline_json(value):
+        return value
+    if os.path.isfile(value):
+        try:
+            with open(value) as fh:
+                return fh.read()
+        except OSError:
+            return None
+    return None
+
+
+def _loopback_port(url) -> int | None:
+    """The port of *url* when its host is loopback, else ``None``.
+
+    Falls back to the scheme's default port when the URL names none; ``None`` for
+    a non-loopback host, an unparseable URL, or a port outside ``1..65535``.
+    """
+    if not isinstance(url, str):
+        return None
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+    if host is None or host.lower() not in _LOOPBACK_HOSTS:
+        return None
+    if port is None:
+        port = _SCHEME_DEFAULT_PORTS.get(parsed.scheme)
+    if port is None or not 0 < port < 65536:
+        return None
+    return port
+
+
+def loopback_mcp_ports(claude_args) -> list[int]:
+    """The deduped host-loopback ports named in *claude_args*' ``--mcp-config``.
+
+    Each operand (inline JSON or a real file's contents) is parsed and every
+    ``mcpServers.<name>.url`` inspected; the port of each loopback URL is collected
+    in first-seen order. Operands that do not parse, are not objects, or name a
+    non-loopback host are skipped silently -- claude validates its own config, and
+    forwarding a non-loopback port would breach host-localhost isolation.
+    """
+    ports: list[int] = []
+    seen: set[int] = set()
+    for value in _mcp_config_values(claude_args):
+        text = _config_json_text(value)
+        if text is None:
+            continue
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        servers = data.get("mcpServers") if isinstance(data, dict) else None
+        if not isinstance(servers, dict):
+            continue
+        for server in servers.values():
+            if not isinstance(server, dict):
+                continue
+            port = _loopback_port(server.get("url"))
+            if port is not None and port not in seen:
+                seen.add(port)
+                ports.append(port)
+    return ports
 
 
 # --- IDE lockfile reconciliation ---------------------------------------------
