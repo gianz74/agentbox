@@ -35,11 +35,14 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import SCHEMA_VERSION
-from .sandbox import DEFAULT_PATH, Bind
+from . import net, sandbox
+from .config import SCHEMA_VERSION, load_user_config
+from .mounts import render, resolve, resolve_context
+from .sandbox import DEFAULT_PATH, Bind, SandboxSpec, host_identity
 
 # Store location, relative to $HOME. A wrapper-private directory the native
 # install is redirected into; the host's own ~/.local install is left alone.
@@ -340,5 +343,196 @@ def delete():
     raise NotImplementedError("delete is not implemented yet")
 
 
-def run(mounts, claude_args):
-    raise NotImplementedError("the run path is not implemented yet")
+# --- run path: store freshness, environment, launch --------------------------
+
+# The sandbox identity (HOME/USER) and the launcher PATH are set explicitly from
+# the resolved identity and store wiring; they are never carried in from the host
+# environment or the config, so they are excluded everywhere the run-time
+# environment is assembled.
+_IDENTITY_ENV = ("HOME", "USER", "PATH")
+
+# Host environment always forwarded into the sandbox, independent of config: just
+# enough terminal/locale state for the CLI to render correctly, plus the
+# Anthropic/Claude knobs the CLI itself reads. A name matches if it is listed
+# here or begins with one of the prefixes below.
+_BASELINE_ENV_NAMES = frozenset(
+    {
+        "TERM",
+        "COLORTERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "LANG",
+        "LANGUAGE",
+        "TZ",
+        "COLUMNS",
+        "LINES",
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+    }
+)
+_BASELINE_ENV_PREFIXES = ("LC_", "ANTHROPIC_", "CLAUDE_")
+
+
+def _baseline_env(host_env) -> dict[str, str]:
+    """The universal host baseline: terminal/locale plus the Anthropic/Claude
+    knobs, never the identity/launcher keys."""
+    out: dict[str, str] = {}
+    for key, value in host_env.items():
+        if key in _IDENTITY_ENV:
+            continue
+        if key in _BASELINE_ENV_NAMES or key.startswith(_BASELINE_ENV_PREFIXES):
+            out[key] = value
+    return out
+
+
+def _apply_env_scope(env: dict[str, str], literals, forward, host_env) -> None:
+    """Layer one ``[env]`` scope onto *env*: ``forward`` pulls host values (an
+    unset host var is skipped), then literal pairs override them."""
+    for name in forward:
+        if name in host_env:
+            env[name] = host_env[name]
+    for key, value in literals.items():
+        env[key] = value
+
+
+def build_env(config, matched, host_env) -> dict[str, str]:
+    """The environment applied to the sandboxed ``claude`` via ``--setenv``.
+
+    Layered low-to-high: a universal host baseline, then the global ``[env]``,
+    then the matched context's ``env`` -- each scope's ``forward`` list pulling
+    host values and its literals overriding, so a context value wins over a global
+    one and a literal wins over a forwarded value. The identity/launcher keys are
+    excluded; the sandbox sets those itself.
+    """
+    env = _baseline_env(host_env)
+    _apply_env_scope(env, dict(config.env), config.forward, host_env)
+    if matched is not None:
+        _apply_env_scope(env, dict(matched.env), matched.forward, host_env)
+    for key in _IDENTITY_ENV:
+        env.pop(key, None)
+    return env
+
+
+def store_matches(
+    config,
+    *,
+    store: str | os.PathLike[str] | None = None,
+    home: str | os.PathLike[str] | None = None,
+) -> bool:
+    """True if the frozen store is present and its identity stamp is current --
+    the fast path that does no install work.
+
+    A store needs rebuilding (returns False) when it is missing, carries no stamp,
+    was built against a different config schema, or its recorded claude version has
+    drifted from a ``[setup].claude_version`` pin. An unpinned config accepts
+    whatever version the store holds.
+    """
+    s = Path(store) if store is not None else store_dir(home)
+    if not store_present(s):
+        return False
+    stamp = read_stamp(s)
+    if stamp is None or stamp.get("schema_version") != SCHEMA_VERSION:
+        return False
+    pin = config.setup.claude_version if config is not None else None
+    return pin is None or stamp.get("version") == pin
+
+
+def ensure_store(
+    config,
+    *,
+    store: str | os.PathLike[str] | None = None,
+    home: str | os.PathLike[str] | None = None,
+    install=None,
+) -> Path:
+    """Ensure a present, current frozen store, building it on the spot when one is
+    missing or its stamp has drifted (:func:`store_matches`); return its path.
+
+    The fast path (a matching store) does no install work. *install*, when given,
+    is a ``callable(store_path)`` that builds the store -- used to drive an
+    offline or synthetic build; the default runs the native installer honoring any
+    ``[setup].claude_version`` pin.
+    """
+    s = Path(store) if store is not None else store_dir(home)
+    if store_matches(config, store=s, home=home):
+        return s
+    if install is not None:
+        install(s)
+    else:
+        version = config.setup.claude_version if config is not None else None
+        install_store(store=s, method="native", version=version)
+    return s
+
+
+def run(
+    mounts=(),
+    claude_args=(),
+    *,
+    config=None,
+    cwd: str | None = None,
+    home: str | None = None,
+    env=None,
+    store: str | os.PathLike[str] | None = None,
+    install=None,
+    sse_port: int | None = None,
+    gateway: str | None = None,
+) -> int:
+    """The hot path: launch a sandboxed ``claude`` session for the current
+    directory and return its exit code.
+
+    Loads the config (unless one is supplied), resolves the cwd to its context and
+    effective mount set, ensures the frozen store is present and current
+    (auto-building it once on a missing/drifted stamp -- otherwise no install
+    work), then renders the binds/masks and the merged environment and execs the
+    store ``claude`` **by absolute path** inside a fresh bwrap sandbox fronted by
+    pasta. The read-only store binds go on last so nothing configured can shadow
+    the in-sandbox claude, and the launcher-prepended ``PATH`` keeps a bare
+    ``claude`` resolving to the store too (the recursion guard).
+
+    Each launch is its own mount and network namespace, so two directories never
+    collide on a shared path; mounts and environment are read fresh per launch, so
+    a ``config.toml`` edit takes effect on the next launch with no rebuild.
+
+    *mounts* are ad-hoc per-session binds (objects with ``path``/``ro``) consumed
+    ahead of the store binds. The remaining keyword arguments override the
+    defaults derived from the host (config/cwd/identity/environment/store) and are
+    primarily test seams.
+    """
+    if config is None:
+        config = load_user_config()
+    cwd = os.getcwd() if cwd is None else cwd
+    host_env = os.environ if env is None else env
+
+    ident = host_identity()
+    h = ident.home if home is None else home
+
+    s = ensure_store(config, store=store, home=h, install=install)
+
+    resolution = resolve(config, cwd, home=h)
+    matched = resolve_context(config, cwd)
+    rendered = render(resolution.mounts)
+
+    cli_binds = tuple(
+        Bind(m.path, m.path, mode="ro" if m.ro else "rw", optional=True)
+        for m in mounts
+    )
+    setenv = build_env(config, matched, host_env)
+    if sse_port is None:
+        sse_port = net.sse_port_from_env(host_env)
+
+    # The launcher directory holds the private ``claude`` symlink and is bound
+    # read-only into the sandbox; it must outlive the launch (the bind source is
+    # read when the sandbox starts), so it wraps the whole boot.
+    with tempfile.TemporaryDirectory(prefix="claude-sandbox-launcher.") as launcher_dir:
+        sl = store_launch(h, launcher_dir, store=s)
+        spec = SandboxSpec(
+            identity=ident,
+            argv=(sl.exec_path, *tuple(claude_args)),
+            binds=(*rendered.binds, *cli_binds, *sl.binds),
+            tmpfs=rendered.masks,
+            setenv=setenv,
+            path=sl.path,
+            chdir=resolution.cwd,
+        )
+        return sandbox.run(spec, sse_port=sse_port, gateway=gateway)
