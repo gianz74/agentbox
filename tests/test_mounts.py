@@ -6,12 +6,13 @@ import os
 
 import pytest
 
-from claude_sandbox.config import parse_config
+from claude_sandbox.config import MountSpec, parse_config
 from claude_sandbox.mounts import (
     DEFAULT_CONTEXT,
     MountError,
     Resolution,
     guard_claude_shadow,
+    render,
     resolve,
     resolve_context,
 )
@@ -298,3 +299,41 @@ def test_resolve_runs_the_shadow_guard():
     cfg = parse_config({"mounts": [{"path": "~/.local/share"}]})
     with pytest.raises(MountError, match="shadow"):
         resolve(cfg, _h("proj"), home=HOME)
+
+
+# --- rendering to bwrap binds ------------------------------------------------
+
+
+def test_render_parity_mount_binds_path_onto_itself():
+    r = render([MountSpec(path="/work/proj", mode="rw")])
+    (bind,) = r.binds
+    assert (bind.src, bind.dest, bind.mode) == ("/work/proj", "/work/proj", "rw")
+    assert r.masks == ()
+
+
+def test_render_alias_binds_backing_onto_sandbox_path():
+    (bind,) = render([MountSpec(path="/home/u/.ssh", from_="/home/u/.ssh-api")]).binds
+    assert bind.src == "/home/u/.ssh-api"  # host backing
+    assert bind.dest == "/home/u/.ssh"  # sandbox-side path
+
+
+def test_render_ro_mode_preserved():
+    (bind,) = render([MountSpec(path="/work/ro", mode="ro")]).binds
+    assert bind.mode == "ro"
+
+
+def test_render_every_bind_is_optional_so_absent_sources_skip():
+    r = render(
+        [MountSpec(path="/a"), MountSpec(path="/b", from_="/elsewhere", mode="ro")]
+    )
+    assert all(b.optional for b in r.binds)
+
+
+def test_render_exclude_becomes_tmpfs_mask_under_the_path():
+    r = render([MountSpec(path="/work/proj", exclude=("secrets", "tmp"))])
+    assert r.masks == ("/work/proj/secrets", "/work/proj/tmp")
+
+
+def test_render_preserves_mount_order():
+    r = render([MountSpec(path="/work/proj"), MountSpec(path="/work/proj/cache")])
+    assert [b.dest for b in r.binds] == ["/work/proj", "/work/proj/cache"]

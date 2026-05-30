@@ -239,13 +239,18 @@ def build_argv(spec: SandboxSpec, *, etc_dir: str | os.PathLike[str]) -> list[st
     # A fresh writable home skeleton; caller binds may overlay paths beneath it.
     argv += ["--tmpfs", ident.home]
 
-    # Caller binds, in order (a later bind overlays an earlier path).
+    # Caller binds, in order: a later bind overlays an earlier path, so the run
+    # path places the read-only claude store binds last and nothing configured
+    # ahead of them can shadow the in-sandbox claude.
     for b in spec.binds:
         if b.mode not in ("ro", "rw"):
             raise SandboxError(f"bind {b.dest}: invalid mode {b.mode!r}")
         flag = ("--ro-bind" if b.mode == "ro" else "--bind") + ("-try" if b.optional else "")
         argv += [flag, b.src, b.dest]
 
+    # Masking: an empty tmpfs over a sub-path of a bind above fully shadows the
+    # real contents. Emitted after the binds (argv order) so each mask lands on
+    # top of the tree it sits inside.
     for t in spec.tmpfs:
         argv += ["--tmpfs", t]
 

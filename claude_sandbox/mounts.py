@@ -20,17 +20,24 @@ directory, decide what a launch exposes:
 * **Guards** -- refuse to launch when the cwd would sit on top of an aliased
   credential store or on a protected host location, and refuse a config whose
   mounts would replace the sandbox's own claude store.
+* **Rendering** -- translate the resolved set into the concrete ``bwrap`` binds
+  and tmpfs masks a launch needs: parity vs alias, read-only vs read-write,
+  absent sources skipped natively, and each ``exclude`` sub-path turned into an
+  empty overmount (:func:`render`).
 
 Everything here is a pure function of the config and the cwd string -- no
-filesystem access, and no bwrap argv (that rendering lives elsewhere).
+filesystem access. Turning the rendered binds and masks into the final ``bwrap``
+argv stays in :mod:`claude_sandbox.sandbox`.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .config import Config, Context, MountSpec
+from .sandbox import Bind
 
 # The fallback context name for a cwd that matches no configured context.
 DEFAULT_CONTEXT = "default"
@@ -227,3 +234,40 @@ def resolve(config: Config, cwd: str, *, home: str | None = None) -> Resolution:
         cwd=cwd,
         mounts=_ordered(mounts),
     )
+
+
+# --- rendering to bwrap binds ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RenderedMounts:
+    """A resolved mount set translated for the sandbox.
+
+    ``binds`` is one :class:`~claude_sandbox.sandbox.Bind` per mount, carrying its
+    parity/alias backing and read-only/read-write mode. ``masks`` are the empty
+    tmpfs overmounts for ``exclude`` sub-paths. The sandbox emits ``masks`` after
+    ``binds`` so each mask lands on top of the bound tree it shadows.
+    """
+
+    binds: tuple[Bind, ...]
+    masks: tuple[str, ...]
+
+
+def render(mounts: Sequence[MountSpec]) -> RenderedMounts:
+    """Translate a resolved mount set into ``bwrap`` binds and tmpfs masks.
+
+    Each mount yields one bind: a parity mount binds its path onto itself, an
+    alias binds its host backing onto the sandbox-side path, and ``mode="ro"``
+    makes it read-only. Every bind is *optional* (bwrap's ``*-bind-try``), so a
+    source that does not exist on this machine is skipped at launch rather than
+    rejected by a host-side existence check. Each ``exclude`` sub-path becomes a
+    tmpfs mask at ``<path>/<sub>`` -- an empty overmount that fully shadows the
+    real contents underneath.
+    """
+    binds: list[Bind] = []
+    masks: list[str] = []
+    for m in mounts:
+        binds.append(Bind(src=m.host_path, dest=m.path, mode=m.mode, optional=True))
+        for sub in m.exclude:
+            masks.append(os.path.normpath(os.path.join(m.path, sub)))
+    return RenderedMounts(binds=tuple(binds), masks=tuple(masks))
