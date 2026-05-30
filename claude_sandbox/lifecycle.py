@@ -39,7 +39,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import net, sandbox
+from . import mcp, net, sandbox
 from .config import SCHEMA_VERSION, load_user_config
 from .mounts import render, resolve, resolve_context
 from .sandbox import DEFAULT_PATH, Bind, SandboxSpec, host_identity
@@ -494,6 +494,12 @@ def run(
     collide on a shared path; mounts and environment are read fresh per launch, so
     a ``config.toml`` edit takes effect on the next launch with no rebuild.
 
+    When an editor exports an SSE port (surfaced here as *sse_port*), pasta
+    forwards exactly that one port into the sandbox and claude runs behind a
+    bootstrap that reconciles the IDE lockfile with the sandbox's pid namespace;
+    ``--mcp-config`` file operands are staged so their host paths resolve inside. A
+    non-IDE launch skips all of this.
+
     *mounts* are ad-hoc per-session binds (objects with ``path``/``ro``) consumed
     ahead of the store binds. The remaining keyword arguments override the
     defaults derived from the host (config/cwd/identity/environment/store) and are
@@ -521,15 +527,24 @@ def run(
     if sse_port is None:
         sse_port = net.sse_port_from_env(host_env)
 
-    # The launcher directory holds the private ``claude`` symlink and is bound
-    # read-only into the sandbox; it must outlive the launch (the bind source is
-    # read when the sandbox starts), so it wraps the whole boot.
-    with tempfile.TemporaryDirectory(prefix="claude-sandbox-launcher.") as launcher_dir:
+    # The launcher and MCP staging directories hold per-launch files bound into
+    # the sandbox; both must outlive the launch (the bind sources are read when
+    # the sandbox starts), so they wrap the whole boot.
+    with tempfile.TemporaryDirectory(prefix="claude-sandbox-launcher.") as launcher_dir, \
+            tempfile.TemporaryDirectory(prefix="claude-sandbox-mcp.") as mcp_stage:
         sl = store_launch(h, launcher_dir, store=s)
+
+        # IDE/MCP bridge: stage any ``--mcp-config`` files so their host paths
+        # resolve inside, and -- when the IDE set an SSE port -- run claude behind
+        # a bootstrap that reconciles the IDE lockfile with the sandbox's pid
+        # namespace before exec'ing it. The SSE port itself is forwarded by pasta.
+        staged_args, mcp_binds = mcp.stage_mcp_configs(claude_args, mcp_stage)
+        entry = mcp.entry_argv(sl.exec_path, staged_args, home=h, sse_port=sse_port)
+
         spec = SandboxSpec(
             identity=ident,
-            argv=(sl.exec_path, *tuple(claude_args)),
-            binds=(*rendered.binds, *cli_binds, *sl.binds),
+            argv=entry,
+            binds=(*rendered.binds, *cli_binds, *mcp_binds, *sl.binds),
             tmpfs=rendered.masks,
             setenv=setenv,
             path=sl.path,
