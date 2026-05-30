@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-sandbox"
+version = "0.0.1"
+description = "Run the claude CLI inside an unprivileged bubblewrap (bwrap) sandbox"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Giampaolo Fresi Roglia" }]
+# No third-party runtime deps: tomllib is stdlib (>=3.11); the mechanism is the
+# host's own bwrap/pasta binaries (a host concern, not a Python dependency).
+dependencies = []
+
+[project.scripts]
+# Internal entry point. The user-facing command is `claude` -- a shim on $PATH
+# that points here.
+claude-sandbox = "claude_sandbox.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["claude_sandbox"]
+
+[tool.pytest.ini_options]
+# Make `pytest -q tests/test_cli.py` importable from a clean checkout without
+# an editable install (flat layout: package lives at the repo root).
+pythonpath = ["."]
