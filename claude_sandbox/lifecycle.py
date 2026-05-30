@@ -28,8 +28,10 @@ fresh skeleton with only whitelisted binds, so a shim living under the host
 ``bwrap``, ``pasta``) and, after building the store, prints how to point the
 user-facing ``claude`` command at this wrapper -- detect and instruct, never
 mutating the host. The store install/freeze, the store-launch wiring and the full
-run path (config -> mounts -> sandbox -> network) live here; ``delete`` arrives
-later.
+run path (config -> mounts -> sandbox -> network) live here, as does ``delete``,
+which removes the frozen store so the next launch rebuilds it. The store is the
+only persistent artifact ``setup`` builds; warm toolchain caches persist purely as
+ordinary ``[[mounts]]`` host directories, so nothing else is wrapper-managed.
 """
 
 from __future__ import annotations
@@ -591,8 +593,40 @@ def setup(
     return 0
 
 
-def delete():
-    raise NotImplementedError("delete is not implemented yet")
+def delete(
+    *,
+    store: str | os.PathLike[str] | None = None,
+    home: str | os.PathLike[str] | None = None,
+    confirm=input,
+    out=print,
+) -> int:
+    """Remove the frozen claude store after a ``[y/N]`` confirmation.
+
+    The frozen store is the only persistent artifact ``setup`` builds; removing it
+    forces the next launch to rebuild it from scratch (the run path auto-``setup``s
+    a missing store). Warm toolchain caches are ordinary host-backed ``[[mounts]]``
+    (e.g. ``~/.cache/npm``) owned by the host -- they live outside the store and are
+    never touched here, so there is nothing else wrapper-managed to prune.
+
+    *confirm* is the prompt callable (default :func:`input`); answering anything but
+    ``y``/``yes`` aborts and leaves the store untouched. Returns ``0`` once the
+    store is gone (including when there was none to begin with) and ``1`` on an
+    aborted confirmation.
+    """
+    s = Path(store) if store is not None else store_dir(home)
+    if not s.exists():
+        out(f"delete: no frozen claude store at {s}; nothing to remove.")
+        return 0
+    answer = confirm(f"delete: remove the frozen claude store at {s}? [y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        out("delete: aborted; the frozen claude store was left in place.")
+        return 1
+    shutil.rmtree(s)
+    out(
+        f"delete: removed the frozen claude store at {s}; "
+        "the next launch will rebuild it."
+    )
+    return 0
 
 
 # --- run path: store freshness, environment, launch --------------------------
