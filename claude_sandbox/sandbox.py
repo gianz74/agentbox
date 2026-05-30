@@ -38,6 +38,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -130,6 +131,35 @@ def host_identity() -> Identity:
     home = os.path.expanduser("~")
     user = os.environ.get("USER") or os.path.basename(home)
     return Identity(user=user, home=home)
+
+
+def build_spec(
+    argv: Sequence[str],
+    *,
+    binds: Sequence[Bind] = (),
+    tmpfs: Sequence[str] = (),
+    setenv: dict[str, str] | None = None,
+    chdir: str | None = None,
+    identity: Identity | None = None,
+) -> SandboxSpec:
+    """Assemble a :class:`SandboxSpec` for the command *argv*.
+
+    The identity defaults to the host's real ``$USER``/``$HOME`` (see
+    :func:`host_identity`). Pass *identity* to reproduce a different one -- e.g. a
+    federated ``user@REALM`` name -- which flows verbatim into the constructed
+    ``passwd``/``group``, so ``id``/``whoami`` inside resolve to it regardless of
+    the host's own uid. *binds* overlay the host scaffold in order, *tmpfs* masks
+    paths beneath it, and *setenv* layers on top of the baseline
+    ``HOME``/``USER``/``PATH``.
+    """
+    return SandboxSpec(
+        identity=identity if identity is not None else host_identity(),
+        argv=tuple(argv),
+        binds=tuple(binds),
+        tmpfs=tuple(tmpfs),
+        setenv=dict(setenv) if setenv else {},
+        chdir=chdir,
+    )
 
 
 def ensure_bwrap() -> None:
