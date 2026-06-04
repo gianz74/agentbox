@@ -100,22 +100,29 @@ def installer(s):
     lifecycle.install_store(store=s, method="copy", source_home=fakehost)
 
 # Host environment the run path reads for baseline + `forward` + (unused) SSE port.
-# HOME/USER/PATH here are deliberately wrong values: build_env must drop them so the
-# sandbox identity/launcher PATH win.
+# HOME/USER here are deliberately wrong: build_env must drop them so the sandbox
+# identity wins. PATH is opt-in: the config below both sets a literal and forwards
+# it, so the sandbox PATH becomes launcher + ~/.local/bin + literal + host PATH
+# (deduped), with the launcher prefix still leading so a bare claude hits the store.
 host_env = {
     "TERM": "xterm-t8",
     "ANTHROPIC_TEST_T8": "anth",
     "T8_FWD": "fwd-val",
     "T8_CTX_FWD": "ctxfwd-val",
     "T8_SECRET": "leak",
-    "HOME": "/wrong/home", "USER": "wrong-user", "PATH": "/wrong/bin",
+    # A realistic host PATH: a host-only dir plus the system dirs the probe's `id`
+    # needs. Forwarding replaces the sandbox base wholesale, so dropping /usr/bin
+    # here would leave coreutils off PATH.
+    "HOME": "/wrong/home", "USER": "wrong-user",
+    "PATH": "/host/only/bin:/usr/bin:/bin",
 }
 
 def make_config(other_proj, *, edited=False):
     glob_env = {
         "SHARED": "global", "ONLY_GLOBAL": "g",
         "OTHER_PROJ": other_proj, "EXTRA_DIR": extra,
-        "forward": ["T8_FWD"],
+        "PATH": "/literal/bin",
+        "forward": ["T8_FWD", "PATH"],
     }
     ctx_env = {"SHARED": "ctx", "ONLY_CTX": "c", "forward": ["T8_CTX_FWD"]}
     data = {"env": dict(glob_env), "contexts": [
@@ -156,7 +163,13 @@ put("ident", A.get("WHOAMI") == ident.user and A.get("HOMEVAL") == ident.home,
     "whoami=%s home=%s" % (A.get("WHOAMI"), A.get("HOMEVAL")))
 put("args", A.get("ARGS") == "--marker A", A.get("ARGS"))
 put("cwd", A.get("CWD") == projA, A.get("CWD"))
-put("launcher_path", (A.get("PATHVAL") or "").startswith(lifecycle.LAUNCHER_DIR), A.get("PATHVAL"))
+_pathv = (A.get("PATHVAL") or "").split(":")
+put("launcher_path", _pathv[:2] == [lifecycle.LAUNCHER_DIR, "%s/.local/bin" % ident.home], A.get("PATHVAL"))
+# Opt-in PATH: literal prepended ahead of the forwarded host PATH, both present.
+put("path_literal_before_host",
+    "/literal/bin" in _pathv and "/host/only/bin" in _pathv
+    and _pathv.index("/literal/bin") < _pathv.index("/host/only/bin"),
+    A.get("PATHVAL"))
 put("env_ctx_wins", A.get("SHARED") == "ctx", A.get("SHARED"))
 put("env_global", A.get("ONLY_GLOBAL") == "g", A.get("ONLY_GLOBAL"))
 put("env_ctx_only", A.get("ONLY_CTX") == "c", A.get("ONLY_CTX"))

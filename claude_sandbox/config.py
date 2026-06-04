@@ -57,11 +57,11 @@ _VALID_MODES = ("ro", "rw")
 _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 # Environment-variable names (literals + ``forward`` entries) must be valid shell
-# identifiers. ``HOME``/``USER``/``PATH`` are reserved — the first two carry the
-# sandbox identity, the third points at the private claude launcher — and are
-# rejected in any ``[env]``.
+# identifiers. ``HOME``/``USER`` are reserved — they carry the sandbox identity and
+# are rejected in any ``[env]``. ``PATH`` is *not* reserved: it is opt-in (literal
+# and/or forwarded) and resolved into the launcher-prefixed sandbox PATH at launch.
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_RESERVED_ENV = ("HOME", "USER", "PATH")
+_RESERVED_ENV = ("HOME", "USER")
 
 # The closed set of top-level tables. An unknown key is a typo or a setting that
 # this tool does not honor; reject it loudly rather than silently ignore it.
@@ -292,7 +292,8 @@ def _parse_env(raw: object, where: str) -> tuple[dict[str, str], tuple[str, ...]
     Returns ``(literals, forward)``: the reserved lowercase key ``forward`` is a
     ``list[str]`` of host var names; every other pair is a literal
     ``KEY = "value"``. Validates env-name shape, string values, and rejects the
-    reserved ``HOME``/``USER``/``PATH``. ``${VAR}`` is already expanded into
+    reserved ``HOME``/``USER``. ``PATH`` is permitted (literal or forwarded) and
+    folded into the sandbox PATH at launch. ``${VAR}`` is already expanded into
     literal values by the pre-pass; env values are *not* ``~``-expanded (they are
     not paths).
     """
@@ -325,7 +326,7 @@ def _check_env_name(name: str, where: str) -> None:
         )
     if name in _RESERVED_ENV:
         raise ConfigError(
-            f"{where}: {name} is reserved (identity + launcher PATH) "
+            f"{where}: {name} is reserved (sandbox identity) "
             "and may not be set in [env]"
         )
 
@@ -554,7 +555,12 @@ _DEFAULT_CONFIG_TOML = """\
 # (${VAR} from [vars] expands; no ~ expansion); the reserved `forward` key lists
 # host var names passed through by value (an unset host var is skipped). A
 # per-context `env` overrides the global one on a key collision.
-# HOME/USER/PATH are reserved and rejected. Env values are literal — ~ is NOT
+# HOME/USER are reserved and rejected. PATH is special: it is opt-in and never
+# replaces the sandbox PATH wholesale — a literal `PATH` and/or listing `PATH` in
+# `forward` (the host PATH) become the *base*, onto which the private launcher
+# prefix is prepended and the result deduped, so a bare `claude` still hits the
+# store. With both, the literal is prepended ahead of the host PATH. Unmentioned,
+# PATH stays the sandbox default (/usr/bin:/bin). Env values are literal — ~ is NOT
 # expanded; for a home-relative path use ${HOME} (e.g. to point git at a config
 # inside a *directory* mount, since a single-file ~/.gitconfig bind mount can't
 # be rewritten atomically).
