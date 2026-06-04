@@ -297,6 +297,21 @@ def store_binds(home: str, store: str | os.PathLike[str]) -> tuple[Bind, Bind]:
     )
 
 
+def _dedup_path(path: str) -> str:
+    """Collapse a ``PATH`` to the first occurrence of each entry, dropping empties.
+
+    Order is preserved, so the launcher prefix stays ahead of everything and any
+    duplicate the host PATH carries (notably ``~/.local/bin``) falls away.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in path.split(":"):
+        if entry and entry not in seen:
+            seen.add(entry)
+            out.append(entry)
+    return ":".join(out)
+
+
 def store_launch(
     home: str,
     launcher_dir: str | os.PathLike[str],
@@ -312,6 +327,10 @@ def store_launch(
     *inside* the sandbox to the store binary, so a bare ``claude`` lands on the
     store even with ``~/.local`` mounted over and a ``claude`` shim elsewhere on
     PATH.
+
+    *base_path* is the PATH the launcher prefix is prepended to (see
+    :func:`resolve_base_path`); the prefix and a final dedup keep a bare ``claude``
+    resolving to the store regardless of what the base contributes.
     """
     s = Path(store) if store is not None else store_dir(home)
     exec_path = sandbox_claude_bin(home)
@@ -322,7 +341,7 @@ def store_launch(
     os.symlink(exec_path, link)
 
     binds = store_binds(home, s) + (Bind(str(launcher_dir), LAUNCHER_DIR, mode="ro"),)
-    path = f"{LAUNCHER_DIR}:{home}/.local/bin:{base_path}"
+    path = _dedup_path(f"{LAUNCHER_DIR}:{home}/.local/bin:{base_path}")
     return StoreLaunch(binds=binds, path=path, exec_path=exec_path)
 
 
@@ -701,6 +720,36 @@ def build_env(config, matched, host_env) -> dict[str, str]:
     return env
 
 
+def _path_sources(literals, forward, host_env) -> list[str]:
+    """One ``[env]`` scope's PATH fragments, highest priority first: a literal
+    ``PATH`` (the config value) ahead of a forwarded host ``$PATH``. An unset or
+    empty host PATH contributes nothing."""
+    out: list[str] = []
+    if "PATH" in literals:
+        out.append(literals["PATH"])
+    if "PATH" in forward and host_env.get("PATH"):
+        out.append(host_env["PATH"])
+    return out
+
+
+def resolve_base_path(config, matched, host_env) -> str:
+    """The PATH the launcher prefix is prepended to at launch.
+
+    PATH is opt-in and treated like any other ``[env]`` key: a literal
+    ``PATH = "..."`` contributes the config value and listing ``PATH`` under
+    ``forward`` contributes the host ``$PATH``. Fragments are joined
+    highest-priority-first -- the matched context ahead of the global scope and,
+    within a scope, the literal ahead of the forwarded host value -- so the dedup
+    in :func:`store_launch` keeps the winning copy of any repeated entry. With PATH
+    mentioned nowhere, the sandbox default (:data:`DEFAULT_PATH`) stands.
+    """
+    fragments: list[str] = []
+    if matched is not None:
+        fragments += _path_sources(dict(matched.env), matched.forward, host_env)
+    fragments += _path_sources(dict(config.env), config.forward, host_env)
+    return ":".join(fragments) if fragments else DEFAULT_PATH
+
+
 def store_matches(
     config,
     *,
@@ -827,7 +876,10 @@ def run(
     # the sandbox starts), so they wrap the whole boot.
     with tempfile.TemporaryDirectory(prefix="claude-sandbox-launcher.") as launcher_dir, \
             tempfile.TemporaryDirectory(prefix="claude-sandbox-mcp.") as mcp_stage:
-        sl = store_launch(h, launcher_dir, store=s)
+        sl = store_launch(
+            h, launcher_dir, store=s,
+            base_path=resolve_base_path(config, matched, host_env),
+        )
 
         # IDE/MCP bridge: stage any ``--mcp-config`` files so their host paths
         # resolve inside, and -- when the IDE set an SSE port -- run claude behind

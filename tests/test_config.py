@@ -482,22 +482,36 @@ def test_env_forward_wrong_type_rejected(tmp_path):
         load_config(_write(tmp_path, text))
 
 
-@pytest.mark.parametrize("name", ["HOME", "USER", "PATH"])
+@pytest.mark.parametrize("name", ["HOME", "USER"])
 def test_env_reserved_key_rejected(tmp_path, name):
     text = f'[env]\n{name} = "x"\n'
     with pytest.raises(ConfigError, match="reserved"):
         load_config(_write(tmp_path, text))
 
 
-def test_env_reserved_key_rejected_in_context(tmp_path):
-    text = """\
+@pytest.mark.parametrize("name", ["HOME", "USER"])
+def test_env_reserved_key_rejected_in_context(tmp_path, name):
+    text = f"""\
 [[contexts]]
 name = "c"
 when = ["~/p"]
-env  = { PATH = "/x" }
+env  = {{ {name} = "/x" }}
 """
     with pytest.raises(ConfigError, match="reserved"):
         load_config(_write(tmp_path, text))
+
+
+def test_env_path_allowed_literal_and_forward(tmp_path):
+    # PATH is no longer reserved: it parses both as a literal and in `forward`,
+    # to be folded into the sandbox PATH at launch.
+    text = """\
+[env]
+PATH    = "/opt/tools/bin"
+forward = ["PATH"]
+"""
+    cfg = load_config(_write(tmp_path, text))
+    assert cfg.env["PATH"] == "/opt/tools/bin"
+    assert "PATH" in cfg.forward
 
 
 def test_env_var_expansion_in_value_no_tilde(tmp_path):
