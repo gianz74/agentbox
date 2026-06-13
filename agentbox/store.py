@@ -43,7 +43,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import SCHEMA_VERSION
+from .config import SCHEMA_VERSION, agent_version
 from .sandbox import DEFAULT_PATH, Bind
 
 # Store location, relative to $HOME: a wrapper-private per-agent directory the
@@ -346,11 +346,6 @@ def store_launch(
 # --- store freshness (the run-path fast path) --------------------------------
 
 
-def _pinned_version(config) -> str | None:
-    """The pinned agent version from the config, or ``None`` when unpinned."""
-    return config.setup.claude_version if config is not None else None
-
-
 def store_matches(
     agent,
     config,
@@ -372,7 +367,7 @@ def store_matches(
     stamp = read_stamp(s)
     if stamp is None or stamp.get("schema_version") != SCHEMA_VERSION:
         return False
-    pin = _pinned_version(config)
+    pin = agent_version(config, agent.name)
     return pin is None or stamp.get("version") == pin
 
 
@@ -399,7 +394,7 @@ def ensure_store(
     if install is not None:
         install(s)
     else:
-        install_store(agent, store=s, method="native", version=_pinned_version(config))
+        install_store(agent, store=s, method="native", version=agent_version(config, agent.name))
     return s
 
 
