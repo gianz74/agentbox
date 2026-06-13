@@ -13,9 +13,10 @@ scratch install, not assumed:
   ``VERSION`` *environment variable*, not argv, so the recipe's argv-based
   ``version_args`` cannot express it; and the lone binary carries no readable
   version label in the store layout. Pinning is therefore unsupported for now
-  (``version_args=None``). NOTE: do not set ``[agents.copilot].version`` in the
-  config -- a pin the install cannot honor makes the store-freshness check never
-  converge, rebuilding on every launch.
+  (``version_args=None``). A pin the installer cannot honor would make the
+  store-freshness check never converge (rebuilding on every launch), so config
+  parsing rejects ``[agents.copilot].version`` outright -- keyed on
+  ``version_args is None`` (see ``config._parse_agents``).
 
 * **Self-update freeze.** copilot's auto-update is gated by the
   ``COPILOT_AUTO_UPDATE`` runtime env (it updates *unless* the value is
