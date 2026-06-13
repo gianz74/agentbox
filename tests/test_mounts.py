@@ -93,6 +93,31 @@ def test_unmatched_cwd_is_default_context_with_globals_and_cwd():
 # --- effective mount set -----------------------------------------------------
 
 
+def test_agent_default_mounts_are_in_the_effective_set():
+    # The running agent's built-in auth/config mounts are present even with an
+    # empty config, with their literal ~ expanded to absolute.
+    res = resolve(parse_config({}), CLAUDE, _h("proj"), home=HOME)
+    paths = _paths(res)
+    assert _h(".claude") in paths
+    assert _h(".claude.json") in paths
+
+
+def test_config_mount_overrides_agent_default_same_path():
+    # A user mount on the same sandbox path as an agent default wins (default is
+    # lowest precedence); not bound twice.
+    cfg = parse_config({"mounts": [{"path": "~/.claude", "mode": "ro"}]})
+    res = resolve(cfg, CLAUDE, _h("proj"), home=HOME)
+    claude = [m for m in res.mounts if m.path == _h(".claude")]
+    assert len(claude) == 1
+    assert claude[0].mode == "ro"  # the config mount, not the rw agent default
+
+
+def test_copilot_default_mount_is_its_one_directory():
+    res = resolve(parse_config({}), AGENTS["copilot"], _h("proj"), home=HOME)
+    assert _h(".copilot") in _paths(res)
+    assert _h(".claude") not in _paths(res)  # only the running agent's defaults
+
+
 def test_effective_set_is_global_plus_context_plus_cwd():
     cfg = parse_config(
         {
@@ -135,8 +160,10 @@ def test_cwd_bind_dropped_when_covered_by_parity_mount():
         }
     )
     res = resolve(cfg, CLAUDE, _h("work", "proj"), home=HOME)
-    # ~/work/proj is already exposed by the parity mount ~/work -> no extra bind.
-    assert _paths(res) == [_h("work")]
+    # ~/work/proj is already exposed by the parity mount ~/work -> no extra cwd bind
+    # (the agent's default auth mounts are still present, but the cwd is not re-added).
+    assert _h("work") in _paths(res)
+    assert _h("work", "proj") not in _paths(res)
 
 
 def test_cwd_normalized():

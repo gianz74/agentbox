@@ -387,6 +387,13 @@ class ClaudeAgent(Agent):
     env_names = ()
     default_mounts = (
         MountSpec(path="~/.claude"),
+        # ~/.claude.json is a single-file bind, which is safe here: claude writes it
+        # IN-PLACE (open+write, guarded by a separate .lock file), not via an atomic
+        # temp+rename, so the write goes through the bind -- verified by writing to a
+        # bind-mounted .claude.json (an atomic rename would hit EBUSY on the mount
+        # point, as e.g. `git config` does on ~/.gitconfig). If a future claude
+        # switches to atomic config writes, redirect it into a directory mount via
+        # CLAUDE_CONFIG_DIR (which overrides the config base) instead.
         MountSpec(path="~/.claude.json"),
     )
 
