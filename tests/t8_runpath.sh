@@ -41,9 +41,9 @@ printf '== run-path driver: gw=%s ==\n' "$GW"
 # lines into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import os, shutil, sys, tempfile
-from claude_sandbox import lifecycle
-from claude_sandbox.config import parse_config, SCHEMA_VERSION
-from claude_sandbox.sandbox import host_identity
+from agentbox import lifecycle
+from agentbox.config import parse_config, SCHEMA_VERSION
+from agentbox.sandbox import host_identity
 
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
@@ -52,7 +52,7 @@ def put(k, ok, detail=""):
 
 ident = host_identity()
 
-tmp = tempfile.mkdtemp(prefix="claude-sandbox-t8.")
+tmp = tempfile.mkdtemp(prefix="box-t8.")
 fakehost = os.path.join(tmp, "fakehost")
 store = os.path.join(tmp, "store")            # intentionally absent at first
 projA = os.path.join(tmp, "A", "proj"); os.makedirs(projA)

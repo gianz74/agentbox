@@ -12,8 +12,8 @@ asserted without booting a real sandbox.
 
 import pytest
 
-from claude_sandbox import cli
-from claude_sandbox.cli import Mount
+from agentbox import cli
+from agentbox.cli import Mount
 
 
 # --- subcommand routing -------------------------------------------------------

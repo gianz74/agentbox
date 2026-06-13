@@ -1,4 +1,4 @@
-"""Unit tests for claude_sandbox.config."""
+"""Unit tests for agentbox.config."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from claude_sandbox.config import (
+from agentbox.config import (
     Config,
     ConfigError,
     ensure_user_config,

@@ -77,8 +77,8 @@ printf '== boot driver: PROJ=%s sse=%s blk=%s gw=%s ==\n' "$PROJ" "$PORT_SSE" "$
 # --- boot the sandbox through the package; probe writes results to the rw cwd -
 python3 - "$PROJ" "$PORT_SSE" "$PORT_BLK" "$GW" <<'PY'
 import sys
-from claude_sandbox import sandbox
-from claude_sandbox.sandbox import SandboxSpec, Bind, host_identity
+from agentbox import sandbox
+from agentbox.sandbox import SandboxSpec, Bind, host_identity
 
 proj, sse, blk, gw = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 ident = host_identity()
@@ -142,8 +142,8 @@ else check "ownership-parity (host owner=${owner:-<missing>})" FAIL; fi
 # missing-bwrap diagnostic: a clear error naming the apt package
 if msg=$(python3 -c '
 import os, sys
-os.environ["PATH"] = "/nonexistent-claude-sandbox"
-from claude_sandbox import sandbox
+os.environ["PATH"] = "/nonexistent-box"
+from agentbox import sandbox
 try:
     sandbox.ensure_bwrap()
 except sandbox.SandboxError as e:

@@ -32,7 +32,7 @@ GW=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'via \K[0-9.]+' | head -1)
 [ -n "$GW" ] || fatal "no default gateway found (the hot path is pasta-fronted)"
 
 RESULTS=$(mktemp)
-cleanup() { rm -f "$RESULTS" /tmp/claude-sandbox-t11-ephemeral; rm -rf "${TMP:-}"; }
+cleanup() { rm -f "$RESULTS" /tmp/box-t11-ephemeral; rm -rf "${TMP:-}"; }
 trap cleanup EXIT
 
 printf '== delete driver: gw=%s ==\n' "$GW"
@@ -41,9 +41,9 @@ printf '== delete driver: gw=%s ==\n' "$GW"
 # lines into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import json, os, sys, tempfile
-from claude_sandbox import cli, lifecycle
-from claude_sandbox.config import parse_config
-from claude_sandbox.sandbox import host_identity
+from agentbox import cli, lifecycle
+from agentbox.config import parse_config
+from agentbox.sandbox import host_identity
 
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
@@ -52,13 +52,13 @@ def put(k, ok, detail=""):
 
 ident = host_identity()
 
-tmp = tempfile.mkdtemp(prefix="claude-sandbox-t11.")
+tmp = tempfile.mkdtemp(prefix="box-t11.")
 fakehost = os.path.join(tmp, "fakehost")
 store = os.path.join(tmp, "store")          # intentionally absent at first
 proj = os.path.join(tmp, "proj"); os.makedirs(proj)
 cache = os.path.join(tmp, "cache"); os.makedirs(cache)   # an ordinary rw mount
 cache_marker = os.path.join(cache, "marker")
-eph_path = "/tmp/claude-sandbox-t11-ephemeral"  # a tmpfs surface inside the sandbox
+eph_path = "/tmp/box-t11-ephemeral"  # a tmpfs surface inside the sandbox
 try:
     os.remove(eph_path)                       # a write here must never reach the host
 except FileNotFoundError:

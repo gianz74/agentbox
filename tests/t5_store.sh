@@ -66,8 +66,8 @@ printf '== store driver: proj=%s ==\n' "$PROJ"
 # stdout so the trap can clean it up.
 TMP=$(python3 - "$PROJ" "$PROBE" <<'PY'
 import hashlib, json, os, subprocess, sys, tempfile
-from claude_sandbox import config as cfgmod, lifecycle, sandbox
-from claude_sandbox.sandbox import Bind, SandboxSpec, host_identity
+from agentbox import config as cfgmod, lifecycle, sandbox
+from agentbox.sandbox import Bind, SandboxSpec, host_identity
 
 proj, probe = sys.argv[1], sys.argv[2]
 host = os.path.join(proj, "host")
@@ -80,7 +80,7 @@ ident = host_identity()
 home = ident.home
 ver = "9.9.9"
 
-tmp = tempfile.mkdtemp(prefix="claude-sandbox-t5.")
+tmp = tempfile.mkdtemp(prefix="box-t5.")
 fakehost = os.path.join(tmp, "fakehost")
 store = os.path.join(tmp, "store")
 launcher = os.path.join(tmp, "launcher"); os.makedirs(launcher)
