@@ -148,8 +148,9 @@ def ensure_default_mount_sources(agent, home: str) -> None:
     The file-vs-directory distinction is *declared* by each mount, not inferred:
     ``MountSpec.seed`` is ``None`` for a directory and the seed content for a file
     (an agent author knows which it is -- guessing from the path would misclassify a
-    dotted directory like ``~/.config.d``). Created only when missing -- an existing
-    source is never touched:
+    dotted directory like ``~/.config.d``). Created only when the source is absent
+    by ``lexists`` -- an existing source is never touched, and a symlink (even a
+    dangling one) counts as present, so we never seed through or trip over it:
 
     * a directory mount (``seed is None``) -> ``mkdir -p``;
     * a file mount -> its parent dir plus the declared seed (e.g. ``{}\n`` for a JSON
@@ -163,7 +164,7 @@ def ensure_default_mount_sources(agent, home: str) -> None:
         if m.from_ is not None or not m.path.startswith("~/"):
             continue
         src = os.path.join(home, m.path[2:])
-        if os.path.exists(src):
+        if os.path.lexists(src):  # present in any form (incl. a dangling symlink)
             continue
         if m.seed is None:  # directory-form
             os.makedirs(src, exist_ok=True)
