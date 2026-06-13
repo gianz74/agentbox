@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MCP / IDE bridge under the isolated network. Drives the package hot path
-# (lifecycle.run) through real pasta+bwrap launches and checks everything the
+# (run.run) through real pasta+bwrap launches and checks everything the
 # bridge can verify without a live editor:
 #   - the SSE crux: a host text/event-stream on a loopback port is reachable from
 #     inside the sandbox ONLY through the pasta `-T` forward of that one port,
@@ -48,10 +48,12 @@ printf '== ide-bridge driver: gw=%s ==\n' "$GW"
 # into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import json, os, socket, sys, tempfile, threading
-from agentbox import lifecycle, mcp
+from agentbox import run as rmod, store as smod
+from agentbox.agents import AGENTS, claude
 from agentbox.config import parse_config
 from agentbox.sandbox import SANDBOX_UID, host_identity
 
+AG = AGENTS["claude"]
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
 def put(k, ok, detail=""):
@@ -102,7 +104,7 @@ binsrc = os.path.join(fakehost, ".local", "bin"); os.makedirs(binsrc)
 os.symlink(payload, os.path.join(binsrc, "claude"))
 
 # Build the frozen store once, offline; every launch then takes the fast path.
-lifecycle.install_store(store=store, method="copy", source_home=fakehost)
+smod.install_store(AG, store=store, method="copy", source_home=fakehost)
 
 def kv(path):
     out = {}
@@ -163,14 +165,14 @@ try:
     out = os.path.join(projIDE, "claude_out")
     try: os.remove(out)
     except FileNotFoundError: pass
-    rc = lifecycle.run([], ["--mcp-config", mcp_cfg, "--print"],
+    rc = rmod.run(AG, [], ["--mcp-config", mcp_cfg, "--print"],
                        config=ide_config, cwd=projIDE, env=host_env,
                        store=store, gateway=gw)
     I = kv(out)
     put("ide_rc", rc == 0, "rc=%s" % rc)
     put("sse_bridge", I.get("SSE_EVENTS") not in (None, "0") and int(I.get("SSE_EVENTS", "0")) >= 3,
         "events=%s" % I.get("SSE_EVENTS"))
-    put("mcp_arg_rewritten", (I.get("MCP_ARG") or "").startswith(mcp.MCP_STAGE_DIR), I.get("MCP_ARG"))
+    put("mcp_arg_rewritten", (I.get("MCP_ARG") or "").startswith(claude.MCP_STAGE_DIR), I.get("MCP_ARG"))
     put("mcp_read", I.get("MCP_READ") == MCP_BODY, I.get("MCP_READ"))
     put("sentinel_alive", I.get("SENTINEL_ALIVE") == "yes", I.get("SENTINEL_ALIVE"))
     put("sentinel_uid", I.get("SENTINEL_UID") == str(SANDBOX_UID), I.get("SENTINEL_UID"))
@@ -186,9 +188,9 @@ try:
 
     # --- staging, as a pure check -------------------------------------------
     with tempfile.TemporaryDirectory() as sd:
-        args, binds = mcp.stage_mcp_configs(["--mcp-config", mcp_cfg], sd)
+        args, binds = claude.stage_mcp_configs(["--mcp-config", mcp_cfg], sd)
         staged_ok = (
-            args == ("--mcp-config", "%s/servers.json" % mcp.MCP_STAGE_DIR)
+            args == ("--mcp-config", "%s/servers.json" % claude.MCP_STAGE_DIR)
             and len(binds) == 1
             and open(os.path.join(sd, "servers.json")).read() == MCP_BODY
         )
@@ -202,7 +204,7 @@ try:
         home_ssh = os.path.join(ident.home, ".ssh")
         cfg = parse_config({"mounts": [{"path": home_ssh, "from": ssh, "mode": "ro"}]})
         o = os.path.join(proj, "claude_out")
-        rc = lifecycle.run([], ["--marker", tag], config=cfg, cwd=proj,
+        rc = rmod.run(AG, [], ["--marker", tag], config=cfg, cwd=proj,
                            env={"TERM": "xterm-t9"}, store=store, gateway=gw)
         return rc, kv(o)
 

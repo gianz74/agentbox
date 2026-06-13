@@ -29,12 +29,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-# The IDE SSE port and its reader are claude-specific; they live in the claude
-# agent now (the canonical home). Re-exported here transitionally so the run
-# path's ``net.sse_port_from_env`` keeps working until Phase 2 routes the port
-# through ``agent.launch_hook``; the re-export is removed then.
-from .agents.claude import SSE_PORT_ENV, sse_port_from_env  # noqa: F401
-
 PASTA = "pasta"
 _PASTA_PACKAGE = "passt"
 

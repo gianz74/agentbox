@@ -1,31 +1,40 @@
 """Argv dispatch for box.
 
-Two surfaces:
+``box`` is a multi-call binary (like busybox/git): the invoked name selects the
+agent. Two surfaces:
 
-* Subcommands -- ``setup`` / ``delete``. Anything else is the run path.
-* Run path -- a *leading-block* parse: zero or more leading ``--mount PATH[:ro]``
-  modifiers (ad-hoc per-session binds consumed by the wrapper); the **first
-  non-wrapper token ends the block** and everything from there is forwarded to
-  ``claude`` verbatim. An explicit ``--`` force-terminates wrapper parsing and is
-  itself consumed (not forwarded).
+* **Shims** -- ``claude`` / ``copilot`` symlinks pointing at this entry. The
+  invoked name (``basename(argv[0])``) names the agent; everything after is *pure
+  passthrough* to that agent's run path (a *leading-block* parse of ad-hoc
+  ``--mount PATH[:ro]`` modifiers, then the first non-wrapper token ends the block
+  and the remainder is forwarded to the agent verbatim; an explicit ``--``
+  force-terminates wrapper parsing and is itself consumed).
+* **The explicit entry** -- ``box <agent> setup|delete`` for management. ``box``
+  with no/unknown agent errors, listing the available agents.
 
 The wrapper always operates on the current working directory.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from collections import namedtuple
 
-from . import lifecycle
+from . import preflight, run, store
+from .agents import AGENTS
 from .config import ConfigError, load_user_config
+
+#: The console entry-point name. Not an agent command; selects the management
+#: surface (``box <agent> setup|delete``).
+WRAPPER_ENTRY = "box"
 
 #: A leading ``--mount`` modifier. ``ro`` is True for a read-only bind.
 Mount = namedtuple("Mount", ["path", "ro"])
 
 
 class CliError(Exception):
-    """A user-facing argument error (bad/missing ``--mount`` operand, etc.)."""
+    """A user-facing argument error (bad ``--mount`` operand, unknown agent, etc.)."""
 
 
 def parse_mount(spec: str) -> Mount:
@@ -44,11 +53,10 @@ def parse_mount(spec: str) -> Mount:
 
 
 def parse_run_args(argv):
-    """Split run-path argv into ``(mounts, claude_args)``.
+    """Split run-path argv into ``(mounts, agent_args)``.
 
-    Consumes the leading block of ``--mount PATH[:ro]`` modifiers (and an
-    optional terminating ``--``); the remainder is forwarded to ``claude``
-    untouched.
+    Consumes the leading block of ``--mount PATH[:ro]`` modifiers (and an optional
+    terminating ``--``); the remainder is forwarded to the agent untouched.
     """
     mounts = []
     i, n = 0, len(argv)
@@ -69,15 +77,30 @@ def parse_run_args(argv):
     return mounts, list(argv[i:])
 
 
-# --- subcommands + run path: thin adapters over lifecycle ---------------------
+# --- agent selection ----------------------------------------------------------
 
-def cmd_setup(args) -> int:
-    """``box setup`` -- build/refresh the frozen claude store.
+
+def agent_for_command(name: str):
+    """The agent whose shim ``command`` is *name*, or ``None`` (e.g. for ``box``)."""
+    for agent in AGENTS.values():
+        if agent.command == name:
+            return agent
+    return None
+
+
+def _available_agents() -> str:
+    return ", ".join(sorted(AGENTS))
+
+
+# --- management subcommands (scoped to an agent) ------------------------------
+
+
+def cmd_setup(agent, args) -> int:
+    """``box <agent> setup`` -- build/refresh the agent's frozen store.
 
     Accepts the opt-in ``--from-host`` flag (build by copying the host's native
-    install instead of a fresh native install); loads the user config so a
-    ``[setup].claude_version`` pin and the store-shadow guard apply, then defers
-    to :func:`lifecycle.setup`.
+    install instead of a fresh native install); loads the user config so a version
+    pin and the store-shadow guard apply, then defers to :func:`preflight.setup`.
     """
     from_host = False
     rest = []
@@ -87,54 +110,82 @@ def cmd_setup(args) -> int:
         else:
             rest.append(tok)
     if rest:
-        raise CliError(f"setup: unexpected argument(s): {' '.join(rest)}")
+        raise CliError(f"{agent.command} setup: unexpected argument(s): {' '.join(rest)}")
     try:
         config = load_user_config()
     except ConfigError as exc:
         print(f"box: {exc}", file=sys.stderr)
         return 2
-    return lifecycle.setup(config, from_host=from_host)
+    return preflight.setup(agent, config, from_host=from_host)
 
 
-def cmd_delete(args) -> int:
-    """``box delete`` -- remove the frozen claude store after a confirm."""
+def cmd_delete(agent, args) -> int:
+    """``box <agent> delete`` -- remove the agent's frozen store after a confirm."""
     if args:
-        raise CliError(f"delete: unexpected argument(s): {' '.join(args)}")
-    return lifecycle.delete()
+        raise CliError(f"{agent.command} delete: unexpected argument(s): {' '.join(args)}")
+    return store.delete(agent)
 
 
-def run_passthrough(mounts, claude_args) -> int:
-    """Run path: launch a sandboxed ``claude`` for the current directory.
-
-    The parsed leading-block ``--mount`` modifiers (their ``path``/``ro`` shape is
-    what the run path consumes) and the verbatim ``claude`` args are forwarded to
-    :func:`lifecycle.run`, which loads the config, resolves the cwd context,
-    ensures the frozen store, and execs the store ``claude`` in a fresh sandbox.
-    """
-    return lifecycle.run(mounts, claude_args)
-
-
-#: The recognized management subcommands. Any other argv goes to the run path.
+#: The recognized management subcommands, keyed by name -> ``handler(agent, args)``.
 SUBCOMMANDS = {
     "setup": cmd_setup,
     "delete": cmd_delete,
 }
 
 
-def dispatch(argv) -> int:
-    """Route a program argv (excluding argv[0]) and return an exit code."""
-    if argv and argv[0] in SUBCOMMANDS:
-        return SUBCOMMANDS[argv[0]](argv[1:])
-    mounts, claude_args = parse_run_args(argv)
-    return run_passthrough(mounts, claude_args)
+def run_passthrough(agent, mounts, agent_args) -> int:
+    """Run path: launch a sandboxed *agent* session for the current directory.
+
+    The parsed leading-block ``--mount`` modifiers and the verbatim agent args are
+    forwarded to :func:`run.run`, which loads the config, resolves the cwd context,
+    ensures the frozen store, and execs the store binary in a fresh sandbox.
+    """
+    return run.run(agent, mounts, agent_args)
+
+
+# --- dispatch -----------------------------------------------------------------
+
+
+def dispatch_box(argv) -> int:
+    """The ``box`` management entry: ``box <agent> setup|delete``."""
+    if not argv:
+        raise CliError(
+            f"usage: box <agent> <setup|delete> (agents: {_available_agents()})"
+        )
+    name, rest = argv[0], argv[1:]
+    agent = AGENTS.get(name)
+    if agent is None:
+        raise CliError(f"unknown agent {name!r} (agents: {_available_agents()})")
+    sub = rest[0] if rest else None
+    if sub not in SUBCOMMANDS:
+        got = repr(sub) if sub is not None else "nothing"
+        raise CliError(
+            f"box {name}: expected a subcommand (setup|delete), got {got}"
+        )
+    return SUBCOMMANDS[sub](agent, rest[1:])
+
+
+def dispatch(argv, *, prog: str = WRAPPER_ENTRY) -> int:
+    """Route a program argv (excluding argv[0]) and return an exit code.
+
+    *prog* is the invoked name (``basename(argv[0])``): an agent command means a
+    shim (pure passthrough to that agent's run path); anything else (notably
+    ``box``) means the management entry.
+    """
+    agent = agent_for_command(prog)
+    if agent is not None:
+        mounts, agent_args = parse_run_args(argv)
+        return run_passthrough(agent, mounts, agent_args)
+    return dispatch_box(argv)
 
 
 def main(argv=None) -> int:
-    """Console entry point (``box``)."""
+    """Console entry point (``box`` and its agent shims)."""
     if argv is None:
         argv = sys.argv[1:]
+    prog = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else WRAPPER_ENTRY
     try:
-        return dispatch(argv)
+        return dispatch(argv, prog=prog)
     except CliError as exc:
         print(f"box: {exc}", file=sys.stderr)
         return 2
