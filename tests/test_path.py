@@ -1,8 +1,8 @@
 """PATH handling: opt-in base resolution (`resolve_base_path`) and the
 launcher-prefix prepend + dedup applied by `store_launch`."""
 
-from claude_sandbox.config import parse_config
-from claude_sandbox.lifecycle import (
+from agentbox.config import parse_config
+from agentbox.lifecycle import (
     DEFAULT_PATH,
     LAUNCHER_DIR,
     _dedup_path,

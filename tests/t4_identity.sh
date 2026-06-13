@@ -66,8 +66,8 @@ PROBE
 launch() {  # $1=projdir  $2=mode(host|at)
   python3 - "$1" "$2" "$PROBE" <<'PY'
 import sys, tempfile, subprocess
-from claude_sandbox import sandbox
-from claude_sandbox.sandbox import build_spec, Bind, Identity, host_identity
+from agentbox import sandbox
+from agentbox.sandbox import build_spec, Bind, Identity, host_identity
 
 proj, mode, probe = sys.argv[1], sys.argv[2], sys.argv[3]
 if mode == "at":
@@ -84,7 +84,7 @@ spec = build_spec(
     chdir="/work",
     identity=override,
 )
-with tempfile.TemporaryDirectory(prefix="claude-sandbox-etc.") as etc:
+with tempfile.TemporaryDirectory(prefix="box-etc.") as etc:
     sys.exit(subprocess.run(sandbox.build_argv(spec, etc_dir=etc)).returncode)
 PY
 }

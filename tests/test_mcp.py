@@ -19,8 +19,8 @@ import sys
 
 import pytest
 
-from claude_sandbox import mcp
-from claude_sandbox.sandbox import Bind
+from agentbox import mcp
+from agentbox.sandbox import Bind
 
 
 # --- --mcp-config staging -----------------------------------------------------

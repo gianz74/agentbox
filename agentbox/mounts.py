@@ -1,6 +1,6 @@
 """Mount-set resolution and guards -- pure logic.
 
-Given the loaded :class:`~claude_sandbox.config.Config` and the current working
+Given the loaded :class:`~agentbox.config.Config` and the current working
 directory, decide what a launch exposes:
 
 * **Context resolution** -- a context matches when the cwd is at or under one of
@@ -27,7 +27,7 @@ directory, decide what a launch exposes:
 
 Everything here is a pure function of the config and the cwd string -- no
 filesystem access. Turning the rendered binds and masks into the final ``bwrap``
-argv stays in :mod:`claude_sandbox.sandbox`.
+argv stays in :mod:`agentbox.sandbox`.
 """
 
 from __future__ import annotations
@@ -243,7 +243,7 @@ def resolve(config: Config, cwd: str, *, home: str | None = None) -> Resolution:
 class RenderedMounts:
     """A resolved mount set translated for the sandbox.
 
-    ``binds`` is one :class:`~claude_sandbox.sandbox.Bind` per mount, carrying its
+    ``binds`` is one :class:`~agentbox.sandbox.Bind` per mount, carrying its
     parity/alias backing and read-only/read-write mode. ``masks`` are the empty
     tmpfs overmounts for ``exclude`` sub-paths. The sandbox emits ``masks`` after
     ``binds`` so each mask lands on top of the bound tree it shadows.

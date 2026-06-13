@@ -19,12 +19,12 @@ import os
 
 import pytest
 
-from claude_sandbox import lifecycle
-from claude_sandbox.config import parse_config
-from claude_sandbox.mounts import MountError, guard_claude_shadow
+from agentbox import lifecycle
+from agentbox.config import parse_config
+from agentbox.mounts import MountError, guard_claude_shadow
 
 
-# --- fixtures: a fake claude-sandbox entry and shim layout ----------------------
+# --- fixtures: a fake box entry and shim layout ----------------------
 
 
 def _exe(path, target=None):
@@ -43,7 +43,7 @@ def _exe(path, target=None):
 
 
 def test_wrapper_on_path_is_recognized_and_silent(tmp_path):
-    entry = _exe(tmp_path / "venv" / "bin" / "claude-sandbox")
+    entry = _exe(tmp_path / "venv" / "bin" / "box")
     shim = tmp_path / "bin" / "claude"
     _exe(shim, target=entry)
 
@@ -57,11 +57,11 @@ def test_wrapper_on_path_is_recognized_and_silent(tmp_path):
 
 
 def test_wrapper_recognized_without_known_entry(tmp_path):
-    # Even with no claude-sandbox on PATH to compare against, a `claude` that
-    # resolves to a file named claude-sandbox is recognized as the wrapper.
+    # Even with no box on PATH to compare against, a `claude` that
+    # resolves to a file named box is recognized as the wrapper.
     import shutil
 
-    entry = _exe(tmp_path / "pkg" / "claude-sandbox")
+    entry = _exe(tmp_path / "pkg" / "box")
     shim = tmp_path / "bin" / "claude"
     _exe(shim, target=entry)
 
@@ -78,7 +78,7 @@ def test_wrapper_recognized_without_known_entry(tmp_path):
 
 
 def test_non_wrapper_claude_shadows_wrapper_and_gets_fix(tmp_path):
-    entry = _exe(tmp_path / "venv" / "bin" / "claude-sandbox")
+    entry = _exe(tmp_path / "venv" / "bin" / "box")
     # A real, non-wrapper `claude` sits earlier on PATH (outside ~/bin).
     other = _exe(tmp_path / "usr" / "bin" / "claude")
 
@@ -96,7 +96,7 @@ def test_non_wrapper_claude_shadows_wrapper_and_gets_fix(tmp_path):
 
 
 def test_no_claude_on_path_gets_fix(tmp_path):
-    entry = _exe(tmp_path / "venv" / "bin" / "claude-sandbox")
+    entry = _exe(tmp_path / "venv" / "bin" / "box")
     empty = tmp_path / "empty"
     empty.mkdir()
 
@@ -110,7 +110,7 @@ def test_no_claude_on_path_gets_fix(tmp_path):
 
 
 def test_leftover_shim_in_slot_is_flagged(tmp_path):
-    entry = _exe(tmp_path / "venv" / "bin" / "claude-sandbox")
+    entry = _exe(tmp_path / "venv" / "bin" / "box")
     # A leftover non-wrapper claude already occupies ~/bin/claude, but the one
     # that wins on PATH is elsewhere.
     _exe(tmp_path / "bin" / "claude")
@@ -130,7 +130,7 @@ def test_leftover_shim_in_slot_is_flagged(tmp_path):
 def test_legacy_shim_occupies_the_slot_directly(tmp_path):
     # The winning `claude` *is* the ~/bin/claude slot, and it is not the wrapper
     # (the classic leftover-legacy-shim case): repoint that slot.
-    entry = _exe(tmp_path / "venv" / "bin" / "claude-sandbox")
+    entry = _exe(tmp_path / "venv" / "bin" / "box")
     slot = _exe(tmp_path / "bin" / "claude")
 
     status = lifecycle.resolve_shim(
@@ -144,7 +144,7 @@ def test_legacy_shim_occupies_the_slot_directly(tmp_path):
 
 
 def test_report_shim_prints_and_signals(tmp_path, capsys):
-    entry = _exe(tmp_path / "venv" / "bin" / "claude-sandbox")
+    entry = _exe(tmp_path / "venv" / "bin" / "box")
     shim = _exe(tmp_path / "bin" / "claude", target=entry)
 
     ok = lifecycle.resolve_shim(str(tmp_path / "bin"), home=str(tmp_path), wrapper_entry=entry)

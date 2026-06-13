@@ -1,6 +1,6 @@
 """Config loading and validation.
 
-Loads ``~/.config/claude-sandbox/config.toml`` via :mod:`tomllib` and models its
+Loads ``~/.config/box/config.toml`` via :mod:`tomllib` and models its
 tables into frozen dataclasses. All host paths are ``~``-expanded at load time so
 downstream code never has to.
 
@@ -138,11 +138,11 @@ class Config:
 
 
 def user_config_dir() -> Path:
-    """``$XDG_CONFIG_HOME/claude-sandbox`` (falling back to ``~/.config``)."""
+    """``$XDG_CONFIG_HOME/box`` (falling back to ``~/.config``)."""
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
         os.path.expanduser("~"), ".config"
     )
-    return Path(base) / "claude-sandbox"
+    return Path(base) / "box"
 
 
 # --- low-level coercion helpers ----------------------------------------------
@@ -529,7 +529,7 @@ def load_user_config() -> Config:
 # --- shipped defaults --------------------------------------------------------
 
 _DEFAULT_CONFIG_TOML = """\
-# claude-sandbox configuration.
+# box configuration.
 # Host paths use ~ expansion. Paths absent on this machine are silently skipped.
 
 # --- Variables ----------------------------------------------------------------
@@ -540,10 +540,10 @@ _DEFAULT_CONFIG_TOML = """\
 # ${HOME} for a home-relative value the consuming tool won't ~-expand (e.g. an
 # [env] value below).
 # [vars]
-# WM = "~/.config/claude-sandbox/work-mappings"
+# WM = "~/.config/box/work-mappings"
 
 # --- Setup --------------------------------------------------------------------
-# Options for `claude-sandbox setup`, which builds the frozen claude store.
+# Options for `box setup`, which builds the frozen claude store.
 # Pin a specific claude version (default: latest at setup time).
 # [setup]
 # claude_version = "2.1.150"

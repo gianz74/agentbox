@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CLI wiring: the `claude-sandbox` console entry point really drives `lifecycle`.
+# CLI wiring: the `box` console entry point really drives `lifecycle`.
 # Earlier drivers exercised `lifecycle.run/setup/delete` directly; this one goes
 # through `cli.main`/`cli.dispatch` (the binary's own dispatch) and checks that
 #   - `setup --from-host` runs the real lifecycle: it builds the frozen store
@@ -44,8 +44,8 @@ HOME="$TMPHOME" XDG_CONFIG_HOME="$TMPHOME/.config" python3 - "$TMPHOME" <<'PY'
 import contextlib, io, json, os, sys
 from pathlib import Path
 
-from claude_sandbox import cli, lifecycle
-from claude_sandbox.cli import Mount
+from agentbox import cli, lifecycle
+from agentbox.cli import Mount
 
 home = sys.argv[1]
 ver = "9.9.9"
@@ -68,7 +68,7 @@ binsrc = os.path.join(home, ".local", "bin")
 os.makedirs(binsrc)
 os.symlink(payload, os.path.join(binsrc, "claude"))
 
-store = lifecycle.store_dir()  # = $HOME/.local/share/claude-sandbox/store
+store = lifecycle.store_dir()  # = $HOME/.local/share/box/store
 
 # --- setup --from-host, through cli.main --------------------------------------
 buf = io.StringIO()
@@ -125,7 +125,7 @@ put("no_stub_text_in_cli", "not implemented" not in src,
 
 print("-----------")
 ok = all(v for _, v in res)
-print("CLI: %s -- claude-sandbox entry point drives lifecycle end to end."
+print("CLI: %s -- box entry point drives lifecycle end to end."
       % ("PASS" if ok else "FAIL"))
 sys.exit(0 if ok else 1)
 PY

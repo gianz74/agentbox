@@ -24,7 +24,7 @@ What the scaffold always provides, independent of the caller's binds:
   authoritative.
 * **Namespaces** -- ``--unshare-user``/``ipc``/``pid``/``uts``/``cgroup``. The
   network namespace is *not* unshared here: the sandbox runs inside a network
-  namespace its parent already set up (see :mod:`claude_sandbox.net`), so ``bwrap``
+  namespace its parent already set up (see :mod:`agentbox.net`), so ``bwrap``
   inherits that isolated netns rather than creating its own.
 * **Exec posture** -- ``--clearenv`` then explicit ``--setenv``; ``--chdir``;
   ``--die-with-parent`` (so the sandbox dies with its launcher); ``--new-session``.
@@ -290,7 +290,7 @@ def run(spec: SandboxSpec, *, ports=(), gateway: str | None = None) -> int:
     # once pasta/bwrap have exited.
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="claude-sandbox-etc.") as etc_dir:
+    with tempfile.TemporaryDirectory(prefix="box-etc.") as etc_dir:
         inner = build_argv(spec, etc_dir=etc_dir)
         argv = net.wrap_argv(inner, gateway=gw, ports=ports)
         return subprocess.run(argv).returncode

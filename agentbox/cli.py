@@ -1,4 +1,4 @@
-"""Argv dispatch for claude-sandbox.
+"""Argv dispatch for box.
 
 Two surfaces:
 
@@ -72,7 +72,7 @@ def parse_run_args(argv):
 # --- subcommands + run path: thin adapters over lifecycle ---------------------
 
 def cmd_setup(args) -> int:
-    """``claude-sandbox setup`` -- build/refresh the frozen claude store.
+    """``box setup`` -- build/refresh the frozen claude store.
 
     Accepts the opt-in ``--from-host`` flag (build by copying the host's native
     install instead of a fresh native install); loads the user config so a
@@ -91,13 +91,13 @@ def cmd_setup(args) -> int:
     try:
         config = load_user_config()
     except ConfigError as exc:
-        print(f"claude-sandbox: {exc}", file=sys.stderr)
+        print(f"box: {exc}", file=sys.stderr)
         return 2
     return lifecycle.setup(config, from_host=from_host)
 
 
 def cmd_delete(args) -> int:
-    """``claude-sandbox delete`` -- remove the frozen claude store after a confirm."""
+    """``box delete`` -- remove the frozen claude store after a confirm."""
     if args:
         raise CliError(f"delete: unexpected argument(s): {' '.join(args)}")
     return lifecycle.delete()
@@ -130,13 +130,13 @@ def dispatch(argv) -> int:
 
 
 def main(argv=None) -> int:
-    """Console entry point (``claude-sandbox``)."""
+    """Console entry point (``box``)."""
     if argv is None:
         argv = sys.argv[1:]
     try:
         return dispatch(argv)
     except CliError as exc:
-        print(f"claude-sandbox: {exc}", file=sys.stderr)
+        print(f"box: {exc}", file=sys.stderr)
         return 2
 
 

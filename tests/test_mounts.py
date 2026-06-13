@@ -1,4 +1,4 @@
-"""Unit tests for claude_sandbox.mounts."""
+"""Unit tests for agentbox.mounts."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from claude_sandbox.config import MountSpec, parse_config
-from claude_sandbox.mounts import (
+from agentbox.config import MountSpec, parse_config
+from agentbox.mounts import (
     DEFAULT_CONTEXT,
     MountError,
     Resolution,
