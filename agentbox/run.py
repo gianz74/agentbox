@@ -59,8 +59,8 @@ _UNIVERSAL_ENV_PREFIXES = ("LC_",)
 
 
 def _baseline_env(agent, host_env) -> dict[str, str]:
-    """The universal host baseline (terminal/locale) plus *agent*'s own env surface,
-    never the identity/launcher keys."""
+    """The universal host baseline (terminal/locale) plus *agent*'s own env surface
+    and its fixed ``runtime_env`` literals, never the identity/launcher keys."""
     names = _UNIVERSAL_ENV_NAMES.union(agent.env_names)
     prefixes = _UNIVERSAL_ENV_PREFIXES + tuple(agent.env_prefixes)
     out: dict[str, str] = {}
@@ -68,6 +68,12 @@ def _baseline_env(agent, host_env) -> dict[str, str]:
         if key in _IDENTITY_ENV:
             continue
         if key in names or key.startswith(prefixes):
+            out[key] = value
+    # Agent-set literals (e.g. a self-update kill switch): part of the baseline, so
+    # they override a forwarded host value of the same key but a [env] scope can
+    # still override them in turn.
+    for key, value in agent.runtime_env:
+        if key not in _IDENTITY_ENV:
             out[key] = value
     return out
 
@@ -131,6 +137,27 @@ def resolve_base_path(config, matched, host_env) -> str:
     return ":".join(fragments) if fragments else DEFAULT_PATH
 
 
+def ensure_default_mount_dirs(agent, home: str) -> None:
+    """Create the host *directory* source of each built-in default mount.
+
+    A default mount whose host source does not yet exist is silently skipped by
+    bwrap's bind-try, so an agent's writes there (its auth/config) would land in
+    the ephemeral tmpfs home and vanish on teardown -- a fresh agent could never
+    persist a login. Creating the directory up front gives the read-write bind a
+    real backing. Only directory-form mounts are created; a file-form default
+    mount (e.g. ``~/.claude.json``, identified by a file extension) is left to the
+    user, since we must not create it as a directory. Aliased mounts (an explicit
+    ``from``) are the user's to provide and are left alone.
+    """
+    for m in agent.default_mounts:
+        if m.from_ is not None or not m.path.startswith("~/"):
+            continue
+        src = os.path.join(home, m.path[2:])
+        if os.path.splitext(src)[1]:  # a file (e.g. ~/.claude.json): not ours to create
+            continue
+        os.makedirs(src, exist_ok=True)
+
+
 def run(
     agent,
     mounts=(),
@@ -178,6 +205,7 @@ def run(
     h = ident.home if home is None else home
 
     s = ensure_store(agent, config, store=store, home=h, install=install)
+    ensure_default_mount_dirs(agent, h)
 
     resolution = resolve(config, agent, cwd, home=h)
     matched = resolve_context(config, cwd)

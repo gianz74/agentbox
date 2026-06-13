@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from .base import Agent
 from .claude import ClaudeAgent
+from .copilot import CopilotAgent
 
 #: The agent registry: name -> singleton instance.
 AGENTS: dict[str, Agent] = {
     "claude": ClaudeAgent(),
+    "copilot": CopilotAgent(),
 }
 
 __all__ = ["AGENTS", "Agent"]

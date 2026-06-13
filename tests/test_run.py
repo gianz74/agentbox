@@ -5,11 +5,14 @@ onto the universal baseline, scope precedence, and the identity/launcher drop.
 locks in the pure env logic, which is parameterized by the agent.)
 """
 
+import os
+
 from agentbox.agents import AGENTS
 from agentbox.config import parse_config
-from agentbox.run import build_env
+from agentbox.run import build_env, ensure_default_mount_dirs
 
 CLAUDE = AGENTS["claude"]
+COPILOT = AGENTS["copilot"]
 
 
 def _cfg(env=None, contexts=None):
@@ -69,3 +72,41 @@ def test_literal_overrides_forwarded_value():
     cfg = _cfg(env={"X": "literal", "forward": ["X"]})
     env = build_env(CLAUDE, cfg, None, host)
     assert env["X"] == "literal"  # the literal wins over the forwarded host value
+
+
+# --- agent runtime_env (fixed agent-set literals) -----------------------------
+
+
+def test_agent_runtime_env_is_injected():
+    # copilot freezes self-update via a fixed COPILOT_AUTO_UPDATE=false literal.
+    env = build_env(COPILOT, _cfg(), None, {"TERM": "xterm"})
+    assert env["COPILOT_AUTO_UPDATE"] == "false"
+
+
+def test_no_runtime_env_for_an_agent_without_one():
+    env = build_env(CLAUDE, _cfg(), None, {"TERM": "xterm"})
+    assert "COPILOT_AUTO_UPDATE" not in env
+
+
+def test_config_env_can_still_override_runtime_env():
+    # runtime_env is part of the agent baseline, so an explicit [env] literal wins.
+    cfg = _cfg(env={"COPILOT_AUTO_UPDATE": "true"})
+    env = build_env(COPILOT, cfg, None, {})
+    assert env["COPILOT_AUTO_UPDATE"] == "true"
+
+
+# --- ensure_default_mount_dirs ------------------------------------------------
+
+
+def test_ensure_default_mount_dirs_creates_directory_sources(tmp_path):
+    home = str(tmp_path)
+    ensure_default_mount_dirs(COPILOT, home)
+    assert os.path.isdir(os.path.join(home, ".copilot"))
+
+
+def test_ensure_default_mount_dirs_skips_file_form_mounts(tmp_path):
+    # claude has a ~/.claude dir and a ~/.claude.json file; only the dir is made.
+    home = str(tmp_path)
+    ensure_default_mount_dirs(CLAUDE, home)
+    assert os.path.isdir(os.path.join(home, ".claude"))
+    assert not os.path.exists(os.path.join(home, ".claude.json"))  # file: user's to provide
