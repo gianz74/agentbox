@@ -9,7 +9,7 @@ import os
 
 from agentbox.agents import AGENTS
 from agentbox.config import parse_config
-from agentbox.run import build_env, ensure_default_mount_dirs
+from agentbox.run import build_env, ensure_default_mount_sources
 
 CLAUDE = AGENTS["claude"]
 COPILOT = AGENTS["copilot"]
@@ -95,18 +95,29 @@ def test_config_env_can_still_override_runtime_env():
     assert env["COPILOT_AUTO_UPDATE"] == "true"
 
 
-# --- ensure_default_mount_dirs ------------------------------------------------
+# --- ensure_default_mount_sources ---------------------------------------------
 
 
-def test_ensure_default_mount_dirs_creates_directory_sources(tmp_path):
+def test_ensure_default_mount_sources_creates_directory_sources(tmp_path):
     home = str(tmp_path)
-    ensure_default_mount_dirs(COPILOT, home)
+    ensure_default_mount_sources(COPILOT, home)
     assert os.path.isdir(os.path.join(home, ".copilot"))
 
 
-def test_ensure_default_mount_dirs_skips_file_form_mounts(tmp_path):
-    # claude has a ~/.claude dir and a ~/.claude.json file; only the dir is made.
+def test_ensure_default_mount_sources_seeds_json_file_mounts(tmp_path):
+    # claude has a ~/.claude dir and a ~/.claude.json file: the dir is created and
+    # the json file is seeded with {} (a 0-byte file would read as corrupt).
     home = str(tmp_path)
-    ensure_default_mount_dirs(CLAUDE, home)
+    ensure_default_mount_sources(CLAUDE, home)
     assert os.path.isdir(os.path.join(home, ".claude"))
-    assert not os.path.exists(os.path.join(home, ".claude.json"))  # file: user's to provide
+    cfg = os.path.join(home, ".claude.json")
+    assert os.path.isfile(cfg)
+    assert open(cfg).read().strip() == "{}"
+
+
+def test_ensure_default_mount_sources_never_clobbers_existing(tmp_path):
+    home = str(tmp_path)
+    cfg = os.path.join(home, ".claude.json")
+    open(cfg, "w").write('{"keep": 1}')
+    ensure_default_mount_sources(CLAUDE, home)
+    assert open(cfg).read() == '{"keep": 1}'  # existing config left untouched
