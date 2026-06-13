@@ -6,18 +6,22 @@ import os
 
 import pytest
 
+from agentbox.agents import AGENTS
 from agentbox.config import MountSpec, parse_config
 from agentbox.mounts import (
     DEFAULT_CONTEXT,
     MountError,
     Resolution,
-    guard_claude_shadow,
+    guard_store_shadow,
     render,
     resolve,
     resolve_context,
 )
 
 HOME = os.path.expanduser("~")
+# The store-shadow / store-cwd guards key on the running agent's install recipe;
+# claude's payload tree is ~/.local/share/claude and its binary ~/.local/bin/claude.
+CLAUDE = AGENTS["claude"]
 
 
 def _h(*parts: str) -> str:
@@ -78,7 +82,7 @@ def test_unmatched_cwd_is_default_context_with_globals_and_cwd():
             "contexts": [{"name": "api", "when": ["~/work/api"]}],
         }
     )
-    res = resolve(cfg, _h("scratch", "thing"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("scratch", "thing"), home=HOME)
     assert isinstance(res, Resolution)
     assert res.context == DEFAULT_CONTEXT
     # global baseline still present; the cwd is bound; no context mounts added.
@@ -102,7 +106,7 @@ def test_effective_set_is_global_plus_context_plus_cwd():
             ],
         }
     )
-    res = resolve(cfg, _h("work", "api"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("work", "api"), home=HOME)
     assert res.context == "api"
     paths = _paths(res)
     assert _h(".claude") in paths  # global
@@ -112,7 +116,7 @@ def test_effective_set_is_global_plus_context_plus_cwd():
 
 def test_cwd_bind_added_when_not_covered():
     cfg = parse_config({"mounts": [{"path": "~/.claude"}]})
-    res = resolve(cfg, _h("proj"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("proj"), home=HOME)
     cwd_bind = next(m for m in res.mounts if m.path == _h("proj"))
     assert cwd_bind.mode == "rw"
     assert cwd_bind.from_ is None  # parity bind of the cwd itself
@@ -130,13 +134,13 @@ def test_cwd_bind_dropped_when_covered_by_parity_mount():
             ]
         }
     )
-    res = resolve(cfg, _h("work", "proj"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("work", "proj"), home=HOME)
     # ~/work/proj is already exposed by the parity mount ~/work -> no extra bind.
     assert _paths(res) == [_h("work")]
 
 
 def test_cwd_normalized():
-    res = resolve(parse_config({}), _h("proj") + "/", home=HOME)
+    res = resolve(parse_config({}), CLAUDE, _h("proj") + "/", home=HOME)
     assert res.cwd == _h("proj")
 
 
@@ -153,7 +157,7 @@ def test_sibling_dir_never_auto_exposed():
             ]
         }
     )
-    res = resolve(cfg, _h("work", "a"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("work", "a"), home=HOME)
     assert _h("work", "a") in _paths(res)
     assert _h("work", "b") not in _paths(res)
 
@@ -171,7 +175,7 @@ def test_context_mount_overrides_global_same_path():
             ],
         }
     )
-    res = resolve(cfg, _h("work", "x"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("work", "x"), home=HOME)
     ssh = [m for m in res.mounts if m.path == _h(".ssh")]
     assert len(ssh) == 1  # deduplicated, not bound twice
     assert ssh[0].mode == "rw"  # context wins
@@ -193,7 +197,7 @@ def test_nested_bind_ordered_after_its_ancestor():
             ]
         }
     )
-    res = resolve(cfg, _h("work", "proj"), home=HOME)
+    res = resolve(cfg, CLAUDE, _h("work", "proj"), home=HOME)
     paths = _paths(res)
     # The ancestor must precede the descendant so the nested bind overlays it.
     assert paths.index(_h("work", "proj")) < paths.index(
@@ -219,7 +223,7 @@ def test_cwd_under_alias_target_refused():
         }
     )
     with pytest.raises(MountError, match="aliased"):
-        resolve(cfg, _h("work", "x"), home=HOME)
+        resolve(cfg, CLAUDE, _h("work", "x"), home=HOME)
 
 
 def test_cwd_under_alias_source_refused():
@@ -227,23 +231,23 @@ def test_cwd_under_alias_source_refused():
         {"mounts": [{"path": "~/.ssh", "from": "~/.ssh-api", "mode": "ro"}]}
     )
     with pytest.raises(MountError, match="aliased"):
-        resolve(cfg, _h(".ssh-api", "keys"), home=HOME)
+        resolve(cfg, CLAUDE, _h(".ssh-api", "keys"), home=HOME)
 
 
 def test_home_itself_refused():
     with pytest.raises(MountError, match=r"\$HOME"):
-        resolve(parse_config({}), HOME, home=HOME)
+        resolve(parse_config({}), CLAUDE, HOME, home=HOME)
 
 
 def test_filesystem_root_refused():
     with pytest.raises(MountError, match="root"):
-        resolve(parse_config({}), "/", home=HOME)
+        resolve(parse_config({}), CLAUDE, "/", home=HOME)
 
 
 @pytest.mark.parametrize("cwd", ["/etc", "/usr/local/foo", "/var/tmp", "/proc"])
 def test_system_roots_refused(cwd):
     with pytest.raises(MountError, match="system path"):
-        resolve(parse_config({}), cwd, home=HOME)
+        resolve(parse_config({}), CLAUDE, cwd, home=HOME)
 
 
 @pytest.mark.parametrize(
@@ -252,12 +256,12 @@ def test_system_roots_refused(cwd):
 )
 def test_claude_store_cwd_refused(rel):
     with pytest.raises(MountError, match="claude store"):
-        resolve(parse_config({}), _h(*rel.split("/")), home=HOME)
+        resolve(parse_config({}), CLAUDE, _h(*rel.split("/")), home=HOME)
 
 
 def test_local_bin_cwd_allowed():
     # ~/.local/bin is not a store location, so it is a usable workspace.
-    res = resolve(parse_config({}), _h(".local", "bin"), home=HOME)
+    res = resolve(parse_config({}), CLAUDE, _h(".local", "bin"), home=HOME)
     assert _h(".local", "bin") in _paths(res)
 
 
@@ -270,7 +274,7 @@ def test_local_bin_cwd_allowed():
 def test_mount_shadowing_claude_store_refused(path):
     cfg = parse_config({"mounts": [{"path": path}]})
     with pytest.raises(MountError, match="shadow"):
-        guard_claude_shadow(cfg, home=HOME)
+        guard_store_shadow(cfg, CLAUDE, home=HOME)
 
 
 def test_context_mount_shadowing_claude_store_refused():
@@ -287,18 +291,18 @@ def test_context_mount_shadowing_claude_store_refused():
         }
     )
     with pytest.raises(MountError, match="shadow"):
-        guard_claude_shadow(cfg, home=HOME)
+        guard_store_shadow(cfg, CLAUDE, home=HOME)
 
 
 def test_mount_beside_claude_store_allowed():
     cfg = parse_config({"mounts": [{"path": "~/.local/share/other"}]})
-    guard_claude_shadow(cfg, home=HOME)  # must not raise
+    guard_store_shadow(cfg, CLAUDE, home=HOME)  # must not raise
 
 
 def test_resolve_runs_the_shadow_guard():
     cfg = parse_config({"mounts": [{"path": "~/.local/share"}]})
     with pytest.raises(MountError, match="shadow"):
-        resolve(cfg, _h("proj"), home=HOME)
+        resolve(cfg, CLAUDE, _h("proj"), home=HOME)
 
 
 # --- rendering to bwrap binds ------------------------------------------------
