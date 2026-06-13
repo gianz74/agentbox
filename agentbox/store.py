@@ -189,12 +189,17 @@ def _install_native(agent, store: Path, version: str | None) -> None:
     # Drive the installer non-interactively: some installers (copilot's) prompt on
     # a tty to edit a shell profile, which would hang setup or mutate ~/.profile.
     # With no stdin the prompt degrades to printed guidance and the install exits 0.
-    subprocess.run(
-        ["bash", "-c", _native_install_cmd(recipe, version)],
-        env=env,
-        stdin=subprocess.DEVNULL,
-        check=True,
-    )
+    try:
+        subprocess.run(
+            ["bash", "-c", _native_install_cmd(recipe, version)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise StoreError(
+            f"native {agent.command} installer failed (exit {exc.returncode})"
+        ) from exc
     if not _store_bin(agent, store).exists():
         raise StoreError(
             f"native installer produced no {_store_bin(agent, store)} -- install failed"

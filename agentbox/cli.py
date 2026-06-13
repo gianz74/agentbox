@@ -189,6 +189,12 @@ def main(argv=None) -> int:
     except CliError as exc:
         print(f"box: {exc}", file=sys.stderr)
         return 2
+    except store.StoreError as exc:
+        # A store build can fail late (installer non-zero, copy unsupported for a
+        # lone-binary agent, missing source) on both the setup and run paths --
+        # surface it as a clean non-zero exit, not an uncaught traceback.
+        print(f"box: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

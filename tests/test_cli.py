@@ -113,6 +113,21 @@ def test_no_args_is_empty_passthrough():
     assert agent_args == []
 
 
+# --- store-build failures exit cleanly, not as a traceback -------------------
+
+
+def test_main_catches_store_error(monkeypatch, capsys):
+    # A store build can fail late (a failed native installer, or --from-host for a
+    # lone-binary agent); main must turn it into a clean non-zero exit, not let a
+    # StoreError escape as an uncaught traceback.
+    def boom(*a, **k):
+        raise cli.store.StoreError("nope")
+
+    monkeypatch.setattr(cli, "dispatch", boom)
+    assert cli.main(["claude", "setup"]) == 1
+    assert "box: nope" in capsys.readouterr().err
+
+
 # --- leading-block mount parse ------------------------------------------------
 
 def test_mount_then_double_dash_terminator():
