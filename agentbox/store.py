@@ -186,7 +186,15 @@ def _install_native(agent, store: Path, version: str | None) -> None:
     recipe = agent.install
     redirect = recipe.redirect_value.format(store=str(store))
     env = {**os.environ, recipe.redirect_env: redirect}
-    subprocess.run(["bash", "-c", _native_install_cmd(recipe, version)], env=env, check=True)
+    # Drive the installer non-interactively: some installers (copilot's) prompt on
+    # a tty to edit a shell profile, which would hang setup or mutate ~/.profile.
+    # With no stdin the prompt degrades to printed guidance and the install exits 0.
+    subprocess.run(
+        ["bash", "-c", _native_install_cmd(recipe, version)],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        check=True,
+    )
     if not _store_bin(agent, store).exists():
         raise StoreError(
             f"native installer produced no {_store_bin(agent, store)} -- install failed"

@@ -122,10 +122,21 @@ class Agent(ABC):
     env_names: tuple[str, ...] = ()
     #: Mounts every launch of this agent needs (its auth/config dirs).
     default_mounts: tuple[MountSpec, ...] = ()
+    #: Fixed environment injected into every launch, independent of the host
+    #: (e.g. a self-update kill switch). Distinct from ``env_prefixes``/
+    #: ``env_names``, which *forward* host values; these are agent-set literals.
+    #: Applied as part of the agent's baseline, so a user ``[env]`` can still
+    #: override a key if they really mean to.
+    runtime_env: tuple[tuple[str, str], ...] = ()
 
     @abstractmethod
     def disable_self_update(self, store: Path) -> None:
-        """Freeze the store's own copy so it cannot self-update at runtime."""
+        """Freeze the store's own copy so it cannot self-update at runtime.
+
+        Some agents freeze via a runtime env knob (see :attr:`runtime_env`) and a
+        read-only store rather than a store-side file; for those this is a
+        documented no-op.
+        """
 
     @property
     def launch_hook(self) -> "LaunchHook | None":

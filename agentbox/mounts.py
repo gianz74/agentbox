@@ -8,9 +8,11 @@ directory, decide what a launch exposes:
   *longest* matching prefix wins; an exact-length tie falls back to config order
   (the earlier context). A cwd that matches nothing resolves to the reserved
   ``"default"`` context.
-* **Effective mount set** -- the global ``[[mounts]]`` (present in every sandbox)
-  followed by the matched context's own mounts, deduplicated by sandbox-side path
-  with later entries winning, plus a read-write parity bind of the cwd itself. The
+* **Effective mount set** -- the running agent's built-in ``default_mounts`` (its
+  auth/config dirs), then the global ``[[mounts]]`` (present in every sandbox),
+  then the matched context's own mounts, deduplicated by sandbox-side path with
+  later entries winning (so a user mount overrides an agent default of the same
+  path), plus a read-write parity bind of the cwd itself. The
   cwd bind is dropped when an existing parity mount already exposes it. The set is
   ordered ancestors-before-descendants so a bind nested under another overlays it
   correctly; within equal depth the order is globals, then context mounts, then
@@ -92,6 +94,33 @@ def _within(path: str, ancestor: str) -> bool:
 
 def _home(home: str | None) -> str:
     return _norm(home) if home is not None else _norm("~")
+
+
+def _abs(path: str, home: str) -> str:
+    """Expand a leading ``~`` against *home*, then normalize. Used to turn an
+    agent's literal ``~/...`` default-mount paths into the absolute form the
+    parse-time-expanded config mounts already carry, so the two merge and render
+    alike."""
+    if path == "~":
+        return _norm(home)
+    if path.startswith("~/"):
+        return os.path.normpath(os.path.join(home, path[2:]))
+    return os.path.normpath(path)
+
+
+def _default_mounts(agent, home: str) -> tuple[MountSpec, ...]:
+    """The agent's built-in auth/config mounts, with their literal ``~`` expanded
+    against *home*. Lowest precedence in the effective set: a user ``[[mounts]]``
+    or context mount on the same sandbox path overrides them."""
+    return tuple(
+        MountSpec(
+            path=_abs(m.path, home),
+            from_=_abs(m.from_, home) if m.from_ is not None else None,
+            mode=m.mode,
+            exclude=m.exclude,
+        )
+        for m in agent.default_mounts
+    )
 
 
 def _store_targets(agent, home: str) -> tuple[str, ...]:
@@ -192,15 +221,14 @@ def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, agent, home: str) -> 
 # --- mount-set assembly ------------------------------------------------------
 
 
-def _merge(
-    global_mounts: tuple[MountSpec, ...], ctx_mounts: tuple[MountSpec, ...]
-) -> tuple[MountSpec, ...]:
-    """Global mounts then context mounts, deduplicated by normalized sandbox-side
-    path with later entries winning (a context mount overrides a global of the
-    same path; first-seen position is kept)."""
+def _merge(*groups: tuple[MountSpec, ...]) -> tuple[MountSpec, ...]:
+    """Merge mount groups low-to-high, deduplicated by normalized sandbox-side path
+    with later entries winning (a context mount overrides a global, a global
+    overrides an agent default of the same path; first-seen position is kept)."""
     merged: dict[str, MountSpec] = {}
-    for m in (*global_mounts, *ctx_mounts):
-        merged[_norm(m.path)] = m
+    for group in groups:
+        for m in group:
+            merged[_norm(m.path)] = m
     return tuple(merged.values())
 
 
@@ -229,7 +257,9 @@ def resolve(config: Config, agent, cwd: str, *, home: str | None = None) -> Reso
     guard_store_shadow(config, agent, home=h)
 
     matched = resolve_context(config, cwd)
-    effective = _merge(config.mounts, matched.mounts if matched else ())
+    effective = _merge(
+        _default_mounts(agent, h), config.mounts, matched.mounts if matched else ()
+    )
 
     _guard_cwd(cwd, effective, agent=agent, home=h)
 

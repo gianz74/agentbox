@@ -22,12 +22,17 @@ from agentbox.sandbox import Bind
 # --- registry -----------------------------------------------------------------
 
 def test_registry_exposes_claude():
-    assert set(AGENTS) == {"claude"}
+    assert "claude" in AGENTS
     agent = AGENTS["claude"]
     assert isinstance(agent, ClaudeAgent)
     assert isinstance(agent, Agent)
     assert agent.name == "claude"
     assert agent.command == "claude"
+
+
+def test_registry_keys_match_agent_names():
+    # Each agent is registered under its own ``name``; the keys are the selectors.
+    assert all(name == agent.name for name, agent in AGENTS.items())
 
 
 # --- install recipe shape -----------------------------------------------------
