@@ -1,141 +1,151 @@
 """Tests for cli dispatch and the run-path leading-block parse.
 
-  * ``setup`` / ``delete`` route to their ``lifecycle`` handlers (with the
-    ``--from-host`` flag parsed for setup),
+  * ``box <agent> setup|delete`` route to their handlers (with ``--from-host``
+    parsed for setup); an unknown agent / missing subcommand errors,
+  * an agent shim (``prog`` = the agent command) is pure passthrough to the run
+    path: ``-p hi`` reaches ``run.run`` with that agent and ``['-p','hi']``,
   * the subcommand surface is exactly ``{setup, delete}``,
-  * ``-p hi`` routes to ``lifecycle.run`` with ``['-p', 'hi']`` forwarded,
   * ``--mount /x -- --foo`` parses ``/x`` as a mount and ``--foo`` as passthrough.
 
-The dispatch tests stub ``lifecycle.setup/delete/run`` to recorders so routing is
-asserted without booting a real sandbox.
+The dispatch tests stub ``preflight.setup`` / ``store.delete`` / ``run.run`` to
+recorders so routing is asserted without booting a real sandbox.
 """
 
 import pytest
 
 from agentbox import cli
+from agentbox.agents import AGENTS
 from agentbox.cli import Mount
 
+CLAUDE = AGENTS["claude"]
 
-# --- subcommand routing -------------------------------------------------------
 
-def test_setup_routes_to_lifecycle(monkeypatch):
+# --- box <agent> management routing ------------------------------------------
+
+def test_setup_routes_to_preflight(monkeypatch):
     calls = {}
     monkeypatch.setattr(cli, "load_user_config", lambda: "CFG")
     monkeypatch.setattr(
-        cli.lifecycle, "setup",
-        lambda config, *, from_host=False: calls.update(config=config, from_host=from_host) or 0,
+        cli.preflight, "setup",
+        lambda agent, config, *, from_host=False: calls.update(
+            agent=agent, config=config, from_host=from_host) or 0,
     )
-    assert cli.dispatch(["setup"]) == 0
-    assert calls == {"config": "CFG", "from_host": False}
+    assert cli.dispatch(["claude", "setup"]) == 0
+    assert calls == {"agent": CLAUDE, "config": "CFG", "from_host": False}
 
 
 def test_setup_from_host_flag_is_parsed(monkeypatch):
     calls = {}
     monkeypatch.setattr(cli, "load_user_config", lambda: "CFG")
     monkeypatch.setattr(
-        cli.lifecycle, "setup",
-        lambda config, *, from_host=False: calls.update(from_host=from_host) or 0,
+        cli.preflight, "setup",
+        lambda agent, config, *, from_host=False: calls.update(from_host=from_host) or 0,
     )
-    assert cli.dispatch(["setup", "--from-host"]) == 0
+    assert cli.dispatch(["claude", "setup", "--from-host"]) == 0
     assert calls == {"from_host": True}
 
 
 def test_setup_rejects_unexpected_arg(monkeypatch):
     monkeypatch.setattr(cli, "load_user_config", lambda: "CFG")
-    monkeypatch.setattr(cli.lifecycle, "setup", lambda *a, **k: 0)
-    assert cli.main(["setup", "--bogus"]) == 2
+    monkeypatch.setattr(cli.preflight, "setup", lambda *a, **k: 0)
+    assert cli.main(["claude", "setup", "--bogus"]) == 2
 
 
-def test_delete_routes_to_lifecycle(monkeypatch):
+def test_delete_routes_to_store(monkeypatch):
     called = {}
-    monkeypatch.setattr(cli.lifecycle, "delete", lambda: called.update(hit=True) or 0)
-    assert cli.dispatch(["delete"]) == 0
-    assert called == {"hit": True}
+    monkeypatch.setattr(cli.store, "delete", lambda agent: called.update(agent=agent) or 0)
+    assert cli.dispatch(["claude", "delete"]) == 0
+    assert called == {"agent": CLAUDE}
+
+
+def test_unknown_agent_errors():
+    assert cli.main(["bogus", "setup"]) == 2
+
+
+def test_missing_subcommand_errors():
+    assert cli.main(["claude"]) == 2
+
+
+def test_box_with_no_args_errors():
+    assert cli.main([]) == 2
 
 
 def test_subcommand_surface_is_exactly_setup_and_delete():
     assert set(cli.SUBCOMMANDS) == {"setup", "delete"}
 
 
-def test_unknown_first_token_routes_to_run(monkeypatch):
-    # A bareword that is not a known subcommand falls through to the run path.
+# --- agent-shim passthrough (prog = the agent command) -----------------------
+
+def test_shim_passthrough_routes_to_run(monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        cli.lifecycle, "run",
-        lambda mounts, claude_args: seen.update(mounts=mounts, args=claude_args) or 0,
+        cli.run, "run",
+        lambda agent, mounts, agent_args: seen.update(
+            agent=agent, mounts=mounts, args=agent_args) or 0,
     )
-    assert cli.dispatch(["resume"]) == 0
-    assert seen == {"mounts": [], "args": ["resume"]}
+    assert cli.dispatch(["-p", "hi"], prog="claude") == 0
+    assert seen == {"agent": CLAUDE, "mounts": [], "args": ["-p", "hi"]}
 
 
-# --- run-path passthrough -----------------------------------------------------
-
-def test_passthrough_forwards_claude_args():
-    mounts, claude_args = cli.parse_run_args(["-p", "hi"])
-    assert mounts == []
-    assert claude_args == ["-p", "hi"]
-
-
-def test_passthrough_routes_to_run(monkeypatch):
+def test_shim_passthrough_forwards_mounts_and_propagates_rc(monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        cli.lifecycle, "run",
-        lambda mounts, claude_args: seen.update(mounts=mounts, args=claude_args) or 0,
+        cli.run, "run",
+        lambda agent, mounts, agent_args: seen.update(
+            mounts=mounts, args=agent_args) or 7,
     )
-    assert cli.dispatch(["-p", "hi"]) == 0
-    assert seen == {"mounts": [], "args": ["-p", "hi"]}
-
-
-def test_run_path_forwards_mounts_to_run(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(
-        cli.lifecycle, "run",
-        lambda mounts, claude_args: seen.update(mounts=mounts, args=claude_args) or 7,
-    )
-    rc = cli.dispatch(["--mount", "/data:ro", "--", "-p", "hi"])
+    rc = cli.dispatch(["--mount", "/data:ro", "--", "-p", "hi"], prog="claude")
     assert rc == 7  # the run path's exit code is propagated
     assert seen == {"mounts": [Mount("/data", True)], "args": ["-p", "hi"]}
 
 
-def test_no_args_is_empty_passthrough():
-    mounts, claude_args = cli.parse_run_args([])
+# --- run-path passthrough parse ----------------------------------------------
+
+def test_passthrough_forwards_agent_args():
+    mounts, agent_args = cli.parse_run_args(["-p", "hi"])
     assert mounts == []
-    assert claude_args == []
+    assert agent_args == ["-p", "hi"]
+
+
+def test_no_args_is_empty_passthrough():
+    mounts, agent_args = cli.parse_run_args([])
+    assert mounts == []
+    assert agent_args == []
 
 
 # --- leading-block mount parse ------------------------------------------------
 
 def test_mount_then_double_dash_terminator():
-    mounts, claude_args = cli.parse_run_args(["--mount", "/x", "--", "--foo"])
+    mounts, agent_args = cli.parse_run_args(["--mount", "/x", "--", "--foo"])
     assert mounts == [Mount("/x", False)]
-    assert claude_args == ["--foo"]  # the '--' itself is consumed, not forwarded
+    assert agent_args == ["--foo"]  # the '--' itself is consumed, not forwarded
 
 
 def test_mount_ro_suffix():
-    mounts, claude_args = cli.parse_run_args(["--mount", "/data:ro", "claude-sub"])
+    mounts, agent_args = cli.parse_run_args(["--mount", "/data:ro", "claude-sub"])
     assert mounts == [Mount("/data", True)]
-    assert claude_args == ["claude-sub"]
+    assert agent_args == ["claude-sub"]
 
 
 def test_multiple_mounts_then_first_non_wrapper_ends_block():
-    mounts, claude_args = cli.parse_run_args(
+    mounts, agent_args = cli.parse_run_args(
         ["--mount", "/a", "--mount", "/b:ro", "-p", "hi"]
     )
     assert mounts == [Mount("/a", False), Mount("/b", True)]
-    assert claude_args == ["-p", "hi"]
+    assert agent_args == ["-p", "hi"]
 
 
 def test_mount_after_block_passes_through_verbatim():
     # First non-wrapper token ends the block; a later --mount is forwarded as-is.
-    mounts, claude_args = cli.parse_run_args(["-p", "--mount", "/x"])
+    mounts, agent_args = cli.parse_run_args(["-p", "--mount", "/x"])
     assert mounts == []
-    assert claude_args == ["-p", "--mount", "/x"]
+    assert agent_args == ["-p", "--mount", "/x"]
 
 
 def test_double_dash_with_no_mounts():
-    mounts, claude_args = cli.parse_run_args(["--", "--mount", "/x"])
+    mounts, agent_args = cli.parse_run_args(["--", "--mount", "/x"])
     assert mounts == []
-    assert claude_args == ["--mount", "/x"]  # everything after '--' is verbatim
+    assert agent_args == ["--mount", "/x"]  # everything after '--' is verbatim
 
 
 def test_mount_missing_operand_raises():
@@ -144,7 +154,8 @@ def test_mount_missing_operand_raises():
 
 
 def test_main_reports_cli_error(capsys):
-    rc = cli.main(["--mount"])
+    rc = cli.main(["claude", "--mount"])
+    # `claude` is the agent shim only when prog is the command; via `box claude …`
+    # `--mount` is an unknown subcommand, so this errors cleanly.
     assert rc == 2
-    err = capsys.readouterr().err
-    assert "--mount" in err
+    assert "box:" in capsys.readouterr().err

@@ -66,9 +66,11 @@ printf '== store driver: proj=%s ==\n' "$PROJ"
 # stdout so the trap can clean it up.
 TMP=$(python3 - "$PROJ" "$PROBE" <<'PY'
 import hashlib, json, os, subprocess, sys, tempfile
-from agentbox import config as cfgmod, lifecycle, sandbox
+from agentbox import config as cfgmod, sandbox, store as smod
+from agentbox.agents import AGENTS
 from agentbox.sandbox import Bind, SandboxSpec, host_identity
 
+AG = AGENTS["claude"]
 proj, probe = sys.argv[1], sys.argv[2]
 host = os.path.join(proj, "host")
 open(host, "w").close()
@@ -99,13 +101,13 @@ binsrc = os.path.join(fakehost, ".local", "bin"); os.makedirs(binsrc)
 os.symlink(payload, os.path.join(binsrc, "claude"))
 
 # Build the frozen store from that install (the opt-in offline copy path).
-lifecycle.install_store(store=store, method="copy", source_home=fakehost)
+smod.install_store(AG, store=store, method="copy", source_home=fakehost)
 
 # host-side: build / freeze / stamp
 copied = os.path.join(store, ".local", "share", "claude", "versions", ver)
 ok_build = (
-    lifecycle.store_present(store)
-    and lifecycle.installed_version(store) == ver
+    smod.store_present(AG, store)
+    and smod.installed_version(AG, store) == ver
     and os.path.exists(copied)
 )
 put("build", "PASS" if ok_build else "FAIL")
@@ -114,8 +116,8 @@ try:
     put("freeze", "PASS" if fr.get("autoUpdates") is False else f"FAIL({fr})")
 except Exception as e:
     put("freeze", f"FAIL({e})")
-st = lifecycle.read_stamp(store)
-want = {"schema_version": cfgmod.SCHEMA_VERSION, "version": ver, "method": "copy"}
+st = smod.read_stamp(store)
+want = {"schema_version": cfgmod.SCHEMA_VERSION, "version": ver, "method": "copy", "agent": AG.name}
 put("stamp", "PASS" if st == want else f"FAIL({st})")
 
 # A competing claude->wrapper shim on a system PATH dir outside $HOME.
@@ -125,7 +127,7 @@ with open(shim, "w") as f:
 os.chmod(shim, 0o755)
 
 # Store binds + private launcher + PATH (launcher prepended ahead of the shim dir).
-sl = lifecycle.store_launch(home, launcher, store=store, base_path="/shimbin:/usr/bin:/bin")
+sl = smod.store_launch(AG, home, launcher, store=store, base_path="/shimbin:/usr/bin:/bin")
 
 spec = SandboxSpec(
     identity=ident,

@@ -6,7 +6,7 @@
 # those: a non-loopback URL in `--mcp-config` must stay unreachable (no
 # host-localhost leak).
 #
-# This drives the package hot path (lifecycle.run) through real pasta+bwrap with
+# This drives the package hot path (run.run) through real pasta+bwrap with
 # three host-loopback servers up and checks, from inside the sandbox:
 #   - the SSE/ws port round-trips (>=3 events) through its pasta `-T`,
 #   - the `emacs-tools` HTTP URL (a loopback port the editor named) answers 200,
@@ -48,10 +48,12 @@ printf '== mcp-ports driver: gw=%s ==\n' "$GW"
 # into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import json, os, socket, subprocess, sys, tempfile, time, urllib.request
-from agentbox import lifecycle
+from agentbox import run as rmod, store as smod
+from agentbox.agents import AGENTS
 from agentbox.config import parse_config
 from agentbox.sandbox import host_identity
 
+AG = AGENTS["claude"]
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
 def put(k, ok, detail=""):
@@ -107,7 +109,7 @@ binsrc = os.path.join(fakehost, ".local", "bin"); os.makedirs(binsrc)
 os.symlink(payload, os.path.join(binsrc, "claude"))
 
 # Build the frozen store once, offline; the launch then takes the fast path.
-lifecycle.install_store(store=store, method="copy", source_home=fakehost)
+smod.install_store(AG, store=store, method="copy", source_home=fakehost)
 
 def kv(path):
     out = {}
@@ -189,7 +191,7 @@ try:
 
     proj = os.path.join(tmp, "proj"); os.makedirs(proj)
     out = os.path.join(proj, "claude_out")
-    rc = lifecycle.run([], ["--mcp-config", mcp_json, "--print"],
+    rc = rmod.run(AG, [], ["--mcp-config", mcp_json, "--print"],
                        config=parse_config({}), cwd=proj, env=host_env,
                        store=store, gateway=gw)
     I = kv(out)

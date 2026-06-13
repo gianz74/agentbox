@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run path end-to-end: drives the package's hot path (lifecycle.run) through real
+# Run path end-to-end: drives the package's hot path (run.run) through real
 # pasta+bwrap launches and checks that
 #   - a missing store triggers exactly ONE auto-setup, and later launches take the
 #     fast path with no install work (the store-identity stamp),
@@ -41,10 +41,12 @@ printf '== run-path driver: gw=%s ==\n' "$GW"
 # lines into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import os, shutil, sys, tempfile
-from agentbox import lifecycle
+from agentbox import run as rmod, store as smod
+from agentbox.agents import AGENTS
 from agentbox.config import parse_config, SCHEMA_VERSION
 from agentbox.sandbox import host_identity
 
+AG = AGENTS["claude"]
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
 def put(k, ok, detail=""):
@@ -97,7 +99,7 @@ os.symlink(payload, os.path.join(binsrc, "claude"))
 install_count = [0]
 def installer(s):
     install_count[0] += 1
-    lifecycle.install_store(store=s, method="copy", source_home=fakehost)
+    smod.install_store(AG, store=s, method="copy", source_home=fakehost)
 
 # Host environment the run path reads for baseline + `forward` + (unused) SSE port.
 # HOME/USER here are deliberately wrong: build_env must drop them so the sandbox
@@ -147,8 +149,8 @@ def launch(label, cwd, config):
     out = os.path.join(cwd, "claude_out")
     try: os.remove(out)
     except FileNotFoundError: pass
-    rc = lifecycle.run(
-        [], ["--marker", label],
+    rc = rmod.run(
+        AG, [], ["--marker", label],
         config=config, cwd=cwd, env=host_env,
         store=store, install=installer, gateway=gw,
     )
@@ -157,14 +159,14 @@ def launch(label, cwd, config):
 # --- launch A: missing store -> one auto-setup; right context; env precedence ---
 rcA, A = launch("A", projA, make_config(projB))
 put("launch_a_rc", rcA == 0, "rc=%s" % rcA)
-put("autosetup_built", lifecycle.store_present(store) and lifecycle.installed_version(store) == ver,
-    "present=%s ver=%s" % (lifecycle.store_present(store), lifecycle.installed_version(store)))
+put("autosetup_built", smod.store_present(AG, store) and smod.installed_version(AG, store) == ver,
+    "present=%s ver=%s" % (smod.store_present(AG, store), smod.installed_version(AG, store)))
 put("ident", A.get("WHOAMI") == ident.user and A.get("HOMEVAL") == ident.home,
     "whoami=%s home=%s" % (A.get("WHOAMI"), A.get("HOMEVAL")))
 put("args", A.get("ARGS") == "--marker A", A.get("ARGS"))
 put("cwd", A.get("CWD") == projA, A.get("CWD"))
 _pathv = (A.get("PATHVAL") or "").split(":")
-put("launcher_path", _pathv[:2] == [lifecycle.LAUNCHER_DIR, "%s/.local/bin" % ident.home], A.get("PATHVAL"))
+put("launcher_path", _pathv[:2] == [smod.LAUNCHER_DIR, "%s/.local/bin" % ident.home], A.get("PATHVAL"))
 # Opt-in PATH: literal prepended ahead of the forwarded host PATH, both present.
 put("path_literal_before_host",
     "/literal/bin" in _pathv and "/host/only/bin" in _pathv
@@ -202,21 +204,21 @@ put("no_rebuild_after_edit", install_count[0] == 1, "installs=%s" % install_coun
 nopin = parse_config({})
 pin_ok = parse_config({"setup": {"claude_version": ver}})
 pin_bad = parse_config({"setup": {"claude_version": "1.2.3"}})
-put("match_nopin", lifecycle.store_matches(nopin, store=store) is True)
-put("match_pin_ok", lifecycle.store_matches(pin_ok, store=store) is True)
-put("drift_pin", lifecycle.store_matches(pin_bad, store=store) is False)
+put("match_nopin", smod.store_matches(AG, nopin, store=store) is True)
+put("match_pin_ok", smod.store_matches(AG, pin_ok, store=store) is True)
+put("drift_pin", smod.store_matches(AG, pin_bad, store=store) is False)
 
 drift_count = [0]
 def installer2(s):
     drift_count[0] += 1
-    lifecycle.install_store(store=s, method="copy", source_home=fakehost)
-lifecycle.ensure_store(pin_bad, store=store, install=installer2)
+    smod.install_store(AG, store=s, method="copy", source_home=fakehost)
+smod.ensure_store(AG, pin_bad, store=store, install=installer2)
 put("drift_rebuilds", drift_count[0] == 1, "installs=%s" % drift_count[0])
 
-os.remove(os.path.join(store, lifecycle.STAMP_NAME))
-put("drift_unstamped", lifecycle.store_matches(nopin, store=store) is False)
-lifecycle.write_stamp(store, {"schema_version": SCHEMA_VERSION + 1, "version": ver, "method": "copy"})
-put("drift_schema", lifecycle.store_matches(nopin, store=store) is False)
+os.remove(os.path.join(store, smod.STAMP_NAME))
+put("drift_unstamped", smod.store_matches(AG, nopin, store=store) is False)
+smod.write_stamp(store, {"schema_version": SCHEMA_VERSION + 1, "version": ver, "method": "copy"})
+put("drift_schema", smod.store_matches(AG, nopin, store=store) is False)
 
 with open(results_path, "w") as f:
     for k in sorted(checks):

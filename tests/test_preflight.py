@@ -19,9 +19,12 @@ import os
 
 import pytest
 
-from agentbox import lifecycle
+from agentbox import preflight
 from agentbox.config import parse_config
 from agentbox.mounts import MountError, guard_claude_shadow
+
+# The shim resolution is keyed on the agent's command; claude's is ``claude``.
+CMD = "claude"
 
 
 # --- fixtures: a fake box entry and shim layout ----------------------
@@ -47,13 +50,13 @@ def test_wrapper_on_path_is_recognized_and_silent(tmp_path):
     shim = tmp_path / "bin" / "claude"
     _exe(shim, target=entry)
 
-    status = lifecycle.resolve_shim(
-        str(shim.parent), home=str(tmp_path), wrapper_entry=entry
+    status = preflight.resolve_shim(
+        CMD, str(shim.parent), home=str(tmp_path), wrapper_entry=entry
     )
     assert status.resolved == str(shim)
     assert status.is_wrapper is True
     # A correctly shimmed host produces no guidance.
-    assert lifecycle.shim_guidance(status) == []
+    assert preflight.shim_guidance(status) == []
 
 
 def test_wrapper_recognized_without_known_entry(tmp_path):
@@ -70,8 +73,8 @@ def test_wrapper_recognized_without_known_entry(tmp_path):
         # shim lookup against the injected PATH resolves normally.
         return None if path is None else shutil.which(cmd, mode=mode, path=path)
 
-    status = lifecycle.resolve_shim(
-        str(shim.parent), home=str(tmp_path), wrapper_entry=None, which=which
+    status = preflight.resolve_shim(
+        CMD, str(shim.parent), home=str(tmp_path), wrapper_entry=None, which=which
     )
     assert status.wrapper_entry is None
     assert status.is_wrapper is True
@@ -82,13 +85,13 @@ def test_non_wrapper_claude_shadows_wrapper_and_gets_fix(tmp_path):
     # A real, non-wrapper `claude` sits earlier on PATH (outside ~/bin).
     other = _exe(tmp_path / "usr" / "bin" / "claude")
 
-    status = lifecycle.resolve_shim(
-        str(tmp_path / "usr" / "bin"), home=str(tmp_path), wrapper_entry=entry
+    status = preflight.resolve_shim(
+        CMD, str(tmp_path / "usr" / "bin"), home=str(tmp_path), wrapper_entry=entry
     )
     assert status.resolved == other
     assert status.is_wrapper is False
 
-    lines = lifecycle.shim_guidance(status)
+    lines = preflight.shim_guidance(status)
     text = "\n".join(lines)
     assert other in text  # names what claude currently is
     assert f"ln -sf {entry} {status.slot_path}" in text  # the repoint command
@@ -100,11 +103,13 @@ def test_no_claude_on_path_gets_fix(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
 
-    status = lifecycle.resolve_shim(str(empty), home=str(tmp_path), wrapper_entry=entry)
+    status = preflight.resolve_shim(
+        CMD, str(empty), home=str(tmp_path), wrapper_entry=entry
+    )
     assert status.resolved is None
     assert status.is_wrapper is False
 
-    text = "\n".join(lifecycle.shim_guidance(status))
+    text = "\n".join(preflight.shim_guidance(status))
     assert "not on your PATH" in text
     assert f"ln -sf {entry} {status.slot_path}" in text
 
@@ -116,13 +121,13 @@ def test_leftover_shim_in_slot_is_flagged(tmp_path):
     _exe(tmp_path / "bin" / "claude")
     winner = _exe(tmp_path / "usr" / "bin" / "claude")
 
-    status = lifecycle.resolve_shim(
-        str(tmp_path / "usr" / "bin"), home=str(tmp_path), wrapper_entry=entry
+    status = preflight.resolve_shim(
+        CMD, str(tmp_path / "usr" / "bin"), home=str(tmp_path), wrapper_entry=entry
     )
     assert status.resolved == winner
     assert status.slot_taken is True
 
-    text = "\n".join(lifecycle.shim_guidance(status))
+    text = "\n".join(preflight.shim_guidance(status))
     assert status.slot_path in text
     assert "already exists" in text
 
@@ -133,13 +138,13 @@ def test_legacy_shim_occupies_the_slot_directly(tmp_path):
     entry = _exe(tmp_path / "venv" / "bin" / "box")
     slot = _exe(tmp_path / "bin" / "claude")
 
-    status = lifecycle.resolve_shim(
-        str(tmp_path / "bin"), home=str(tmp_path), wrapper_entry=entry
+    status = preflight.resolve_shim(
+        CMD, str(tmp_path / "bin"), home=str(tmp_path), wrapper_entry=entry
     )
     assert status.resolved == slot == status.slot_path
     assert status.is_wrapper is False
 
-    text = "\n".join(lifecycle.shim_guidance(status))
+    text = "\n".join(preflight.shim_guidance(status))
     assert f"ln -sf {entry} {status.slot_path}" in text
 
 
@@ -147,15 +152,17 @@ def test_report_shim_prints_and_signals(tmp_path, capsys):
     entry = _exe(tmp_path / "venv" / "bin" / "box")
     shim = _exe(tmp_path / "bin" / "claude", target=entry)
 
-    ok = lifecycle.resolve_shim(str(tmp_path / "bin"), home=str(tmp_path), wrapper_entry=entry)
-    assert lifecycle.report_shim(ok) is False
+    ok = preflight.resolve_shim(
+        CMD, str(tmp_path / "bin"), home=str(tmp_path), wrapper_entry=entry
+    )
+    assert preflight.report_shim(ok) is False
     assert capsys.readouterr().out == ""
 
     other = _exe(tmp_path / "usr" / "bin" / "claude")
-    bad = lifecycle.resolve_shim(
-        str(tmp_path / "usr" / "bin"), home=str(tmp_path), wrapper_entry=entry
+    bad = preflight.resolve_shim(
+        CMD, str(tmp_path / "usr" / "bin"), home=str(tmp_path), wrapper_entry=entry
     )
-    assert lifecycle.report_shim(bad) is True
+    assert preflight.report_shim(bad) is True
     assert other in capsys.readouterr().out
 
 
@@ -189,19 +196,19 @@ def _which(present):
 
 
 def test_good_host_is_silent(capsys):
-    checks = lifecycle.preflight(
+    checks = preflight.preflight(
         which=_which({"bwrap", "pasta"}), userns_probe=lambda: True
     )
     assert all(c.ok for c in checks)
-    assert lifecycle.report_preflight(checks) is True
+    assert preflight.report_preflight(checks) is True
     assert capsys.readouterr().out == ""
 
 
 def test_missing_pasta_is_instructed(capsys):
-    checks = lifecycle.preflight(
+    checks = preflight.preflight(
         which=_which({"bwrap"}), userns_probe=lambda: True
     )
-    assert lifecycle.report_preflight(checks) is False
+    assert preflight.report_preflight(checks) is False
     out = capsys.readouterr().out
     assert "pasta" in out
     assert "passt" in out  # the apt package to install
@@ -209,22 +216,22 @@ def test_missing_pasta_is_instructed(capsys):
 
 
 def test_missing_bwrap_is_instructed_and_skips_userns(capsys):
-    checks = lifecycle.preflight(
+    checks = preflight.preflight(
         which=_which({"pasta"}),
         userns_probe=lambda: pytest.fail("userns must not be probed without bwrap"),
     )
     # The userns check is skipped when bwrap is absent.
     assert [c.name for c in checks] == ["bwrap", "pasta"]
-    assert lifecycle.report_preflight(checks) is False
+    assert preflight.report_preflight(checks) is False
     out = capsys.readouterr().out
     assert "bubblewrap" in out  # the apt package to install
 
 
 def test_restricted_userns_is_instructed(capsys):
-    checks = lifecycle.preflight(
+    checks = preflight.preflight(
         which=_which({"bwrap", "pasta"}), userns_probe=lambda: False
     )
-    assert lifecycle.report_preflight(checks) is False
+    assert preflight.report_preflight(checks) is False
     out = capsys.readouterr().out
     assert "user namespaces" in out
     assert "unprivileged_userns_clone" in out
@@ -237,7 +244,7 @@ def test_probe_userns_handles_missing_binary():
     def boom(*args, **kwargs):
         raise FileNotFoundError("no bwrap")
 
-    assert lifecycle.probe_userns(run=boom) is False
+    assert preflight.probe_userns(run=boom) is False
 
 
 def test_probe_userns_reads_returncode():
@@ -245,5 +252,5 @@ def test_probe_userns_reads_returncode():
         def __init__(self, rc):
             self.returncode = rc
 
-    assert lifecycle.probe_userns(run=lambda *a, **k: _Proc(0)) is True
-    assert lifecycle.probe_userns(run=lambda *a, **k: _Proc(1)) is False
+    assert preflight.probe_userns(run=lambda *a, **k: _Proc(0)) is True
+    assert preflight.probe_userns(run=lambda *a, **k: _Proc(1)) is False

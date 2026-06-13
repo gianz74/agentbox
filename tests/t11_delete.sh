@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # `delete` + persistent caches via ordinary mounts. Drives the package through real
-# pasta+bwrap launches and the `delete` lifecycle call, and checks that
+# pasta+bwrap launches and the `delete` store call, and checks that
 #   - each launch is an ephemeral sandbox: a write to a tmpfs surface (/tmp) is
 #     gone next launch and never reaches the host,
 #   - a configured rw `[[mounts]]` cache dir is an ordinary host-backed mount: a
@@ -41,7 +41,8 @@ printf '== delete driver: gw=%s ==\n' "$GW"
 # lines into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import json, os, sys, tempfile
-from agentbox import cli, lifecycle
+from agentbox import cli, run as rmod, store as smod
+from agentbox.agents import AGENTS
 from agentbox.config import parse_config
 from agentbox.sandbox import host_identity
 
@@ -50,6 +51,7 @@ checks = {}
 def put(k, ok, detail=""):
     checks[k] = "PASS" if ok else ("FAIL(%s)" % detail if detail else "FAIL")
 
+AG = AGENTS["claude"]
 ident = host_identity()
 
 tmp = tempfile.mkdtemp(prefix="box-t11.")
@@ -89,7 +91,7 @@ os.symlink(payload, os.path.join(binsrc, "claude"))
 install_count = [0]
 def installer(s):
     install_count[0] += 1
-    lifecycle.install_store(store=s, method="copy", source_home=fakehost)
+    smod.install_store(AG, store=s, method="copy", source_home=fakehost)
 
 # HOME/USER/PATH here are deliberately wrong: the sandbox sets its own identity.
 host_env = {"TERM": "xterm-t11", "HOME": "/wrong/home", "USER": "wrong", "PATH": "/wrong/bin"}
@@ -115,8 +117,8 @@ def launch():
     out = os.path.join(proj, "claude_out")
     try: os.remove(out)
     except FileNotFoundError: pass
-    rc = lifecycle.run(
-        [], [],
+    rc = rmod.run(
+        AG, [], [],
         config=make_config(), cwd=proj, env=host_env,
         store=store, install=installer, gateway=gw,
     )
@@ -125,7 +127,7 @@ def launch():
 # --- launch 1: missing store -> one auto-setup; fresh sandbox; empty cache -----
 rc1, L1 = launch()
 put("launch1_rc", rc1 == 0, "rc=%s" % rc1)
-put("autosetup_built", lifecycle.store_present(store), "present=%s" % lifecycle.store_present(store))
+put("autosetup_built", smod.store_present(AG, store), "present=%s" % smod.store_present(AG, store))
 put("autosetup_once", install_count[0] == 1, "installs=%s" % install_count[0])
 put("eph_fresh_1", L1.get("EPH_SEEN") == "no", L1.get("EPH_SEEN"))
 put("cache_empty_1", L1.get("CACHE_SEEN") == "no", L1.get("CACHE_SEEN"))
@@ -145,27 +147,27 @@ put("cache_survives", L2.get("CACHE_SEEN") == "yes", L2.get("CACHE_SEEN"))
 put("eph_fresh_2", L2.get("EPH_SEEN") == "no", L2.get("EPH_SEEN"))
 
 # --- delete: `[y/N]`=N aborts and keeps the store ------------------------------
-rc_abort = lifecycle.delete(store=store, confirm=lambda p: "n", out=lambda *a: None)
+rc_abort = smod.delete(AG, store=store, confirm=lambda p: "n", out=lambda *a: None)
 put("delete_abort_rc", rc_abort == 1, "rc=%s" % rc_abort)
-put("delete_abort_keeps_store", lifecycle.store_present(store))
+put("delete_abort_keeps_store", smod.store_present(AG, store))
 
 # --- delete: `[y/N]`=y removes the store, leaving the host cache untouched ------
-rc_del = lifecycle.delete(store=store, confirm=lambda p: "y", out=lambda *a: None)
+rc_del = smod.delete(AG, store=store, confirm=lambda p: "y", out=lambda *a: None)
 put("delete_rc", rc_del == 0, "rc=%s" % rc_del)
-put("delete_removes_store", not lifecycle.store_present(store) and not os.path.exists(store))
+put("delete_removes_store", not smod.store_present(AG, store) and not os.path.exists(store))
 put("delete_keeps_caches", os.path.exists(cache_marker))
 
 # --- delete: idempotent on an already-absent store -----------------------------
-rc_again = lifecycle.delete(store=store, confirm=lambda p: "y", out=lambda *a: None)
+rc_again = smod.delete(AG, store=store, confirm=lambda p: "y", out=lambda *a: None)
 put("delete_idempotent_rc", rc_again == 0, "rc=%s" % rc_again)
-put("delete_idempotent_no_store", not lifecycle.store_present(store))
+put("delete_idempotent_no_store", not smod.store_present(AG, store))
 
 # --- launch 3: deleted store -> the next launch re-setups it -------------------
 rc3, L3 = launch()
 put("launch3_rc", rc3 == 0, "rc=%s" % rc3)
 put("resetup_after_delete",
-    lifecycle.store_present(store) and install_count[0] == 2,
-    "present=%s installs=%s" % (lifecycle.store_present(store), install_count[0]))
+    smod.store_present(AG, store) and install_count[0] == 2,
+    "present=%s installs=%s" % (smod.store_present(AG, store), install_count[0]))
 put("cache_outlives_delete", L3.get("CACHE_SEEN") == "yes", L3.get("CACHE_SEEN"))
 
 # --- launch 4: the re-setup store is reused on the fast path -------------------
@@ -177,7 +179,7 @@ put("resetup_then_fastpath", install_count[0] == 2, "installs=%s" % install_coun
 put("surface_setup_delete_only", set(cli.SUBCOMMANDS) == {"setup", "delete"},
     "%s" % sorted(cli.SUBCOMMANDS))
 put("no_gc_subcommand", "gc" not in cli.SUBCOMMANDS)
-put("no_gc_in_lifecycle", not hasattr(lifecycle, "gc"))
+put("no_gc_in_store_or_run", not hasattr(smod, "gc") and not hasattr(rmod, "gc"))
 
 with open(results_path, "w") as f:
     for k in sorted(checks):
