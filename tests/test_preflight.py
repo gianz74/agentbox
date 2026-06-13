@@ -265,7 +265,9 @@ def test_probe_userns_reads_returncode():
 def test_setup_builds_store_under_the_home_override(monkeypatch, tmp_path):
     # setup(home=...) must build the store under that home, not the process ~ --
     # otherwise the store dest diverges from the home the guard and shim resolve
-    # against. (Host preflight and the real install are stubbed out.)
+    # against. The same override must reach the copy source (source_home) so a
+    # --from-host build copies from the override, not the process ~. (Host
+    # preflight and the real install are stubbed out.)
     seen = {}
     monkeypatch.setattr(preflight, "preflight", lambda *a, **k: ())
     monkeypatch.setattr(preflight, "report_preflight", lambda checks: True)
@@ -273,7 +275,8 @@ def test_setup_builds_store_under_the_home_override(monkeypatch, tmp_path):
     monkeypatch.setattr(preflight, "report_shim", lambda status: None)
     monkeypatch.setattr(
         preflight.store, "install_store",
-        lambda agent, *, store, method, version: seen.update(store=store) or store,
+        lambda agent, *, store, method, version, source_home: seen.update(
+            store=store, source_home=source_home) or store,
     )
     monkeypatch.setattr(preflight.store, "installed_version", lambda agent, s: "9.9.9")
 
@@ -281,3 +284,4 @@ def test_setup_builds_store_under_the_home_override(monkeypatch, tmp_path):
     assert rc == 0
     assert seen["store"] == preflight.store.store_dir(CLAUDE, home=str(tmp_path))
     assert str(tmp_path) in str(seen["store"])  # under the override, not real ~
+    assert seen["source_home"] == str(tmp_path)  # copy source honors the override too
