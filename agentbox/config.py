@@ -6,8 +6,10 @@ downstream code never has to.
 
 Tables:
 
-* ``[setup]`` — occasional store-build options (an optional ``claude_version``
-  pin). Tooling inside the sandbox comes from the host read-only.
+* ``[agents.<name>]`` — per-agent options, keyed by an agent name validated
+  against the built-in registry. Version-only in v1 (an optional ``version`` pin);
+  unset = latest at setup time. Tooling inside the sandbox comes from the host
+  read-only.
 * ``[[mounts]]`` — global persistent binds, present in every sandbox.
 * ``[[contexts]]`` — cwd-prefix-selected bundles (``name`` / ``when`` / their own
   ``mounts``), optionally splicing in reusable ``[mount_groups]`` via ``include``.
@@ -26,7 +28,7 @@ parse time and absent from the runtime :class:`Config`.
 
 Public surface:
 
-* :class:`Config` (+ :class:`SetupConfig`, :class:`MountSpec`, :class:`Context`)
+* :class:`Config` (+ :class:`AgentConfig`, :class:`MountSpec`, :class:`Context`)
   — the parsed model.
 * :class:`ConfigError` — raised with a clear, user-facing message on any
   malformed/invalid config (including a malformed TOML file).
@@ -48,7 +50,7 @@ from pathlib import Path
 
 # Bumped when the config's *shape* changes incompatibly. Folded into the
 # store-identity stamp so a schema change forces a re-`setup`.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _VALID_MODES = ("ro", "rw")
 
@@ -65,8 +67,9 @@ _RESERVED_ENV = ("HOME", "USER")
 
 # The closed set of top-level tables. An unknown key is a typo or a setting that
 # this tool does not honor; reject it loudly rather than silently ignore it.
-_TOP_LEVEL_KEYS = ("setup", "mounts", "contexts", "vars", "mount_groups", "env")
-_SETUP_KEYS = ("claude_version",)
+_TOP_LEVEL_KEYS = ("agents", "mounts", "contexts", "vars", "mount_groups", "env")
+# Per-agent keys under ``[agents.<name>]``. Version-only in v1.
+_AGENT_KEYS = ("version",)
 
 
 class ConfigError(Exception):
@@ -102,14 +105,14 @@ class MountSpec:
 
 
 @dataclass(frozen=True)
-class SetupConfig:
-    """``[setup]`` — options for building the frozen claude store.
+class AgentConfig:
+    """``[agents.<name>]`` — per-agent store-build options.
 
-    ``claude_version`` optionally pins the installed version; unset = latest at
-    setup time.
+    ``version`` optionally pins the installed version; unset = latest at setup
+    time. Version-only in v1 (agent-scoped env/mounts are deferred).
     """
 
-    claude_version: str | None = None
+    version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,13 +128,24 @@ class Context:
 
 @dataclass(frozen=True)
 class Config:
-    setup: SetupConfig = field(default_factory=SetupConfig)
+    # Per-agent options, keyed by agent name (validated against the registry).
+    agents: Mapping[str, AgentConfig] = field(default_factory=dict)
     mounts: tuple[MountSpec, ...] = ()  # global, present in every sandbox
     contexts: tuple[Context, ...] = ()
     # Global env: merged broadest-first with each context's own env and applied
     # at ``exec`` time.
     env: Mapping[str, str] = field(default_factory=dict)
     forward: tuple[str, ...] = ()
+
+
+def agent_version(config: "Config | None", agent_name: str) -> str | None:
+    """The pinned version for *agent_name* from ``[agents.<name>].version``, or
+    ``None`` when there is no config, no such ``[agents.<name>]`` table, or no
+    pin (latest at setup time)."""
+    if config is None:
+        return None
+    ac = config.agents.get(agent_name)
+    return ac.version if ac is not None else None
 
 
 # --- locations ---------------------------------------------------------------
@@ -273,14 +287,35 @@ def _parse_mount(raw: object, where: str) -> MountSpec:
     )
 
 
-def _parse_setup(raw: object) -> SetupConfig:
+def _parse_agents(raw: object) -> dict[str, AgentConfig]:
+    """Parse ``[agents.<name>]`` tables into a ``name -> AgentConfig`` map.
+
+    Each ``<name>`` must be a built-in agent (validated against the registry); an
+    unknown name is a typo or an agent this build does not ship. Each body is a
+    closed table carrying only ``version`` in v1.
+    """
     if raw is None:
-        return SetupConfig()
+        return {}
     if not isinstance(raw, dict):
-        raise ConfigError("[setup]: expected a table")
-    _reject_unknown_keys(raw, _SETUP_KEYS, "[setup]")
-    version = _opt_str(raw.get("claude_version"), "[setup].claude_version")
-    return SetupConfig(claude_version=version)
+        raise ConfigError("[agents]: expected a table")
+    # Imported lazily so the config module stays import-cycle-free (the registry's
+    # agents import config); only reached when an [agents.*] table is present.
+    from .agents import AGENTS
+
+    out: dict[str, AgentConfig] = {}
+    for name, body in raw.items():
+        where = f"[agents.{name}]"
+        if name not in AGENTS:
+            known = ", ".join(sorted(AGENTS)) or "(none)"
+            raise ConfigError(
+                f"{where}: unknown agent {name!r} (known agents: {known})"
+            )
+        if not isinstance(body, dict):
+            raise ConfigError(f"{where}: expected a table")
+        _reject_unknown_keys(body, _AGENT_KEYS, where)
+        version = _opt_str(body.get("version"), f"{where}.version")
+        out[name] = AgentConfig(version=version)
+    return out
 
 
 # --- environment (`[env]` + context `env`) -----------------------------------
@@ -478,7 +513,7 @@ def parse_config(data: dict, *, source: str = "<config>") -> Config:
     env, forward = _parse_env(data.get("env"), "[env]")
 
     return Config(
-        setup=_parse_setup(data.get("setup")),
+        agents=_parse_agents(data.get("agents")),
         mounts=global_mounts,
         contexts=contexts,
         env=env,
@@ -542,15 +577,18 @@ _DEFAULT_CONFIG_TOML = """\
 # [vars]
 # WM = "~/.config/box/work-mappings"
 
-# --- Setup --------------------------------------------------------------------
-# Options for `box setup`, which builds the frozen claude store.
-# Pin a specific claude version (default: latest at setup time).
-# [setup]
-# claude_version = "2.1.150"
+# --- Agents -------------------------------------------------------------------
+# Per-agent options for `box <agent> setup`, which builds that agent's frozen
+# store. The table name must be a built-in agent. Pin a specific version
+# (default: latest at setup time). Auth/config mounts for each agent are built in
+# and need not be listed under [[mounts]] below.
+# [agents.claude]
+# version = "2.1.150"
 
 # --- Environment --------------------------------------------------------------
-# Extra env passed into the sandbox at `exec claude`, on top of the always-
-# forwarded universal baseline (terminal/locale, IDE hints, ANTHROPIC_*/CLAUDE_*).
+# Extra env passed into the sandbox at `exec <agent>`, on top of the always-
+# forwarded universal baseline (terminal/locale, IDE hints, plus the selected
+# agent's own env surface, e.g. claude's ANTHROPIC_*/CLAUDE_*).
 # Applied at launch, never baked in. Literal KEY = "value" sets it verbatim
 # (${VAR} from [vars] expands; no ~ expansion); the reserved `forward` key lists
 # host var names passed through by value (an unset host var is skipped). A
@@ -579,14 +617,9 @@ _DEFAULT_CONFIG_TOML = """\
 
 # --- Global persistent mounts: present in every sandbox -----------------------
 # `path` is the mount location (host & sandbox identical). `from` aliases a
-# different host backing dir. Default mode is rw; mark credentials `ro`.
-
-# Claude's auth/history/config.
-[[mounts]]
-path = "~/.claude"
-[[mounts]]
-path = "~/.claude.json"
-
+# different host backing dir. Default mode is rw; mark credentials `ro`. The
+# selected agent's own auth/config dirs are mounted automatically and need not be
+# listed here.
 # Example read-only credential mount:
 # [[mounts]]
 # path = "~/.aws"

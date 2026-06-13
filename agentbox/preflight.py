@@ -22,6 +22,7 @@ import sys
 from dataclasses import dataclass
 
 from . import net, sandbox, store
+from .config import agent_version
 from .mounts import MountError, guard_claude_shadow
 
 # The console entry point a shim must point at. A ``<command>`` shim placed on
@@ -280,7 +281,7 @@ def setup(
             print(f"setup: {exc}", file=sys.stderr)
             return 1
 
-    version = config.setup.claude_version if config is not None else None
+    version = agent_version(config, agent.name)
     s = store.install_store(agent, method="copy" if from_host else "native", version=version)
     print(
         f"setup: frozen {agent.command} store ready at {s} "
