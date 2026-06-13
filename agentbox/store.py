@@ -370,15 +370,20 @@ def store_matches(
     the fast path that does no install work.
 
     A store needs rebuilding (returns False) when it is missing, carries no stamp,
-    was built against a different config schema, or its recorded version has
-    drifted from a configured version pin. An unpinned config accepts whatever
-    version the store holds.
+    was built against a different config schema, belongs to a different agent, or
+    its recorded version has drifted from a configured version pin. An unpinned
+    config accepts whatever version the store holds.
     """
     s = Path(store) if store is not None else store_dir(agent, home)
     if not store_present(agent, s):
         return False
     stamp = read_stamp(s)
     if stamp is None or stamp.get("schema_version") != SCHEMA_VERSION:
+        return False
+    # The agent is part of the stamp's identity: an explicit store= path (or a
+    # mis-copied store) whose binary name happens to match but was built for a
+    # different agent is drift, not a hit. A missing field is treated as drift too.
+    if stamp.get("agent") != agent.name:
         return False
     pin = agent_version(config, agent.name)
     return pin is None or stamp.get("version") == pin
