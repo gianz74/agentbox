@@ -19,7 +19,7 @@ directory, decide what a launch exposes:
   credential bundle.
 * **Guards** -- refuse to launch when the cwd would sit on top of an aliased
   credential store or on a protected host location, and refuse a config whose
-  mounts would replace the sandbox's own claude store.
+  mounts would replace the sandbox's own frozen agent store.
 * **Rendering** -- translate the resolved set into the concrete ``bwrap`` binds
   and tmpfs masks a launch needs: parity vs alias, read-only vs read-write,
   absent sources skipped natively, and each ``exclude`` sub-path turned into an
@@ -60,7 +60,7 @@ _SYSTEM_ROOTS = (
 
 class MountError(Exception):
     """A user-facing refusal: an unsafe working directory, or a config whose
-    mounts would replace the sandbox's own claude store."""
+    mounts would replace the sandbox's own frozen agent store."""
 
 
 @dataclass(frozen=True)
@@ -94,13 +94,16 @@ def _home(home: str | None) -> str:
     return _norm(home) if home is not None else _norm("~")
 
 
-def _claude_store_targets(home: str) -> tuple[str, ...]:
-    """Sandbox-side paths the frozen claude store binds onto. A configured mount
-    covering either would replace claude and break ``exec claude``."""
-    return (
-        os.path.join(home, ".local", "bin", "claude"),
-        os.path.join(home, ".local", "share", "claude"),
-    )
+def _store_targets(agent, home: str) -> tuple[str, ...]:
+    """Sandbox-side paths the frozen store binds onto -- the agent's binary, plus
+    its payload tree when it has one (derived from the agent's install recipe). A
+    configured mount covering any of these would replace the store and break
+    ``exec <command>``."""
+    recipe = agent.install
+    rels = [recipe.binary_rel]
+    if recipe.payload_rel is not None:
+        rels.append(recipe.payload_rel)
+    return tuple(os.path.join(home, *rel) for rel in rels)
 
 
 # --- context resolution ------------------------------------------------------
@@ -123,15 +126,16 @@ def resolve_context(config: Config, cwd: str) -> Context | None:
 # --- guards ------------------------------------------------------------------
 
 
-def guard_claude_shadow(config: Config, *, home: str | None = None) -> None:
-    """Refuse a config whose mounts would cover the sandbox's claude store.
+def guard_store_shadow(config: Config, agent, *, home: str | None = None) -> None:
+    """Refuse a config whose mounts would cover *agent*'s frozen store.
 
     Checks every configured mount, global and per-context: a mount whose
-    sandbox-side ``path`` is an ancestor of -- or equal to -- a store target would
-    mask the read-only claude bound there. cwd-independent, so it can run at
-    setup time over the whole config."""
+    sandbox-side ``path`` is an ancestor of -- or equal to -- a store target (the
+    agent's binary, and its payload tree when it has one) would mask the read-only
+    store bound there. cwd-independent, so it can run at setup time over the whole
+    config."""
     h = _home(home)
-    targets = tuple(_norm(t) for t in _claude_store_targets(h))
+    targets = tuple(_norm(t) for t in _store_targets(agent, h))
     all_mounts = (
         *config.mounts,
         *(m for ctx in config.contexts for m in ctx.mounts),
@@ -140,14 +144,14 @@ def guard_claude_shadow(config: Config, *, home: str | None = None) -> None:
         mpath = _norm(m.path)
         if any(_within(t, mpath) for t in targets):
             raise MountError(
-                f"mount {m.path!r} would shadow the sandbox's claude store; "
-                "narrow or remove it"
+                f"mount {m.path!r} would shadow the sandbox's {agent.command} "
+                "store; narrow or remove it"
             )
 
 
-def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, home: str) -> None:
+def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, agent, home: str) -> None:
     """Refuse an unsafe working directory: an aliased credential store, ``$HOME``
-    itself, the filesystem root, a system root, or a claude store location."""
+    itself, the filesystem root, a system root, or part of the agent's store."""
     # An aliased mount remaps a credential store onto a different host backing;
     # neither its target nor its source may double as a workspace.
     for m in mounts:
@@ -172,13 +176,17 @@ def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, home: str) -> None:
                 f"refusing to run in {cwd!r}: it is under the system path {root!r}"
             )
 
-    local = os.path.join(home, ".local")
-    share = os.path.join(local, "share")
-    claude = os.path.join(share, "claude")
-    if cwd in (local, share) or _within(cwd, claude):
-        raise MountError(
-            f"refusing to run in {cwd!r}: it is part of the sandbox's claude store"
-        )
+    # The store's payload tree -- and the intermediate directories under $HOME that
+    # lead to it -- are off limits as a workspace: the read-only store binds there.
+    # A lone-binary agent (no payload tree) has no such subtree to protect.
+    payload_rel = agent.install.payload_rel
+    if payload_rel is not None:
+        payload = _norm(os.path.join(home, *payload_rel))
+        if _within(cwd, payload) or (_within(payload, cwd) and _within(cwd, home)):
+            raise MountError(
+                f"refusing to run in {cwd!r}: it is part of the sandbox's "
+                f"{agent.command} store"
+            )
 
 
 # --- mount-set assembly ------------------------------------------------------
@@ -210,20 +218,20 @@ def _ordered(mounts: tuple[MountSpec, ...]) -> tuple[MountSpec, ...]:
     return tuple(sorted(mounts, key=lambda m: _norm(m.path).count("/")))
 
 
-def resolve(config: Config, cwd: str, *, home: str | None = None) -> Resolution:
-    """Resolve *cwd* against *config* into the effective launch surface.
+def resolve(config: Config, agent, cwd: str, *, home: str | None = None) -> Resolution:
+    """Resolve *cwd* against *config* into the effective launch surface for *agent*.
 
-    Raises :class:`MountError` if the config would shadow the claude store, or if
+    Raises :class:`MountError` if the config would shadow the agent's store, or if
     the cwd is an unsafe place to run."""
     h = _home(home)
     cwd = _norm(cwd)
 
-    guard_claude_shadow(config, home=h)
+    guard_store_shadow(config, agent, home=h)
 
     matched = resolve_context(config, cwd)
     effective = _merge(config.mounts, matched.mounts if matched else ())
 
-    _guard_cwd(cwd, effective, home=h)
+    _guard_cwd(cwd, effective, agent=agent, home=h)
 
     mounts = effective
     if not _cwd_is_covered(cwd, effective):

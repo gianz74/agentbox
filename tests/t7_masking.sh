@@ -123,7 +123,7 @@ cfg = parse_config(
         ]
     }
 )
-res = resolve(cfg, proj, home=home)
+res = resolve(cfg, AG, proj, home=home)
 rendered = render(res.mounts)
 
 # User binds first; the read-only store binds appended last so nothing configured

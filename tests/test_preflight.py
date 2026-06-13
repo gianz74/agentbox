@@ -20,11 +20,14 @@ import os
 import pytest
 
 from agentbox import preflight
+from agentbox.agents import AGENTS
 from agentbox.config import parse_config
-from agentbox.mounts import MountError, guard_claude_shadow
+from agentbox.mounts import MountError, guard_store_shadow
 
 # The shim resolution is keyed on the agent's command; claude's is ``claude``.
 CMD = "claude"
+# The store-shadow guard keys on the running agent's install recipe.
+CLAUDE = AGENTS["claude"]
 
 
 # --- fixtures: a fake box entry and shim layout ----------------------
@@ -175,12 +178,12 @@ def test_report_shim_prints_and_signals(tmp_path, capsys):
 def test_config_shadowing_store_refused(path):
     cfg = parse_config({"mounts": [{"path": path}]})
     with pytest.raises(MountError, match="shadow"):
-        guard_claude_shadow(cfg, home=os.path.expanduser("~"))
+        guard_store_shadow(cfg, CLAUDE, home=os.path.expanduser("~"))
 
 
 def test_config_beside_store_allowed():
     cfg = parse_config({"mounts": [{"path": "~/.local/share/other"}]})
-    guard_claude_shadow(cfg, home=os.path.expanduser("~"))  # must not raise
+    guard_store_shadow(cfg, CLAUDE, home=os.path.expanduser("~"))  # must not raise
 
 
 # --- host preflight messaging ------------------------------------------------

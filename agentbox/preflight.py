@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from . import net, sandbox, store
 from .config import agent_version
-from .mounts import MountError, guard_claude_shadow
+from .mounts import MountError, guard_store_shadow
 
 # The console entry point a shim must point at. A ``<command>`` shim placed on
 # PATH ahead of the real binary routes it through the sandbox; the absolute-path
@@ -276,7 +276,7 @@ def setup(
 
     if config is not None:
         try:
-            guard_claude_shadow(config, home=h)
+            guard_store_shadow(config, agent, home=h)
         except MountError as exc:
             print(f"setup: {exc}", file=sys.stderr)
             return 1
