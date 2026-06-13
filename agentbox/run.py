@@ -137,25 +137,35 @@ def resolve_base_path(config, matched, host_env) -> str:
     return ":".join(fragments) if fragments else DEFAULT_PATH
 
 
-def ensure_default_mount_dirs(agent, home: str) -> None:
-    """Create the host *directory* source of each built-in default mount.
+def ensure_default_mount_sources(agent, home: str) -> None:
+    """Create the host source of each built-in default mount so its read-write bind
+    has real backing and a fresh agent persists its first run.
 
-    A default mount whose host source does not yet exist is silently skipped by
-    bwrap's bind-try, so an agent's writes there (its auth/config) would land in
-    the ephemeral tmpfs home and vanish on teardown -- a fresh agent could never
-    persist a login. Creating the directory up front gives the read-write bind a
-    real backing. Only directory-form mounts are created; a file-form default
-    mount (e.g. ``~/.claude.json``, identified by a file extension) is left to the
-    user, since we must not create it as a directory. Aliased mounts (an explicit
-    ``from``) are the user's to provide and are left alone.
+    An absent source is silently skipped by bwrap's bind-try, so the agent's writes
+    there (its auth/config) would land in the ephemeral tmpfs home and vanish on
+    teardown. Created only when missing -- an existing source is never touched:
+
+    * a directory mount -> ``mkdir -p``;
+    * a file mount -> its parent dir plus an empty seed: ``{}`` for a ``.json``
+      config (so the agent reads a clean empty config rather than treating a 0-byte
+      file as corrupt -- claude logs a parse error and writes a junk backup
+      otherwise), an empty file for anything else.
+
+    Aliased mounts (an explicit ``from``) and non-``~/`` paths are the user's to
+    provide and are left alone.
     """
     for m in agent.default_mounts:
         if m.from_ is not None or not m.path.startswith("~/"):
             continue
         src = os.path.join(home, m.path[2:])
-        if os.path.splitext(src)[1]:  # a file (e.g. ~/.claude.json): not ours to create
+        if os.path.exists(src):
             continue
-        os.makedirs(src, exist_ok=True)
+        if os.path.splitext(src)[1]:  # file-form (e.g. ~/.claude.json)
+            os.makedirs(os.path.dirname(src), exist_ok=True)
+            with open(src, "w") as fh:
+                fh.write("{}\n" if src.endswith(".json") else "")
+        else:  # directory-form
+            os.makedirs(src, exist_ok=True)
 
 
 def run(
@@ -205,7 +215,7 @@ def run(
     h = ident.home if home is None else home
 
     s = ensure_store(agent, config, store=store, home=h, install=install)
-    ensure_default_mount_dirs(agent, h)
+    ensure_default_mount_sources(agent, h)
 
     resolution = resolve(config, agent, cwd, home=h)
     matched = resolve_context(config, cwd)
