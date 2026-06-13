@@ -143,13 +143,18 @@ def ensure_default_mount_sources(agent, home: str) -> None:
 
     An absent source is silently skipped by bwrap's bind-try, so the agent's writes
     there (its auth/config) would land in the ephemeral tmpfs home and vanish on
-    teardown. Created only when missing -- an existing source is never touched:
+    teardown.
 
-    * a directory mount -> ``mkdir -p``;
-    * a file mount -> its parent dir plus an empty seed: ``{}`` for a ``.json``
-      config (so the agent reads a clean empty config rather than treating a 0-byte
-      file as corrupt -- claude logs a parse error and writes a junk backup
-      otherwise), an empty file for anything else.
+    The file-vs-directory distinction is *declared* by each mount, not inferred:
+    ``MountSpec.seed`` is ``None`` for a directory and the seed content for a file
+    (an agent author knows which it is -- guessing from the path would misclassify a
+    dotted directory like ``~/.config.d``). Created only when missing -- an existing
+    source is never touched:
+
+    * a directory mount (``seed is None``) -> ``mkdir -p``;
+    * a file mount -> its parent dir plus the declared seed (e.g. ``{}\n`` for a JSON
+      config, so the agent reads a clean empty config rather than treating a 0-byte
+      file as corrupt -- claude logs a parse error and writes a junk backup).
 
     Aliased mounts (an explicit ``from``) and non-``~/`` paths are the user's to
     provide and are left alone.
@@ -160,12 +165,12 @@ def ensure_default_mount_sources(agent, home: str) -> None:
         src = os.path.join(home, m.path[2:])
         if os.path.exists(src):
             continue
-        if os.path.splitext(src)[1]:  # file-form (e.g. ~/.claude.json)
+        if m.seed is None:  # directory-form
+            os.makedirs(src, exist_ok=True)
+        else:  # file-form, seeded with the declared content
             os.makedirs(os.path.dirname(src), exist_ok=True)
             with open(src, "w") as fh:
-                fh.write("{}\n" if src.endswith(".json") else "")
-        else:  # directory-form
-            os.makedirs(src, exist_ok=True)
+                fh.write(m.seed)
 
 
 def run(

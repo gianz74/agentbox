@@ -7,8 +7,10 @@ locks in the pure env logic, which is parameterized by the agent.)
 
 import os
 
+from types import SimpleNamespace
+
 from agentbox.agents import AGENTS
-from agentbox.config import parse_config
+from agentbox.config import MountSpec, parse_config
 from agentbox.run import build_env, ensure_default_mount_sources
 
 CLAUDE = AGENTS["claude"]
@@ -121,3 +123,22 @@ def test_ensure_default_mount_sources_never_clobbers_existing(tmp_path):
     open(cfg, "w").write('{"keep": 1}')
     ensure_default_mount_sources(CLAUDE, home)
     assert open(cfg).read() == '{"keep": 1}'  # existing config left untouched
+
+
+def test_ensure_default_mount_sources_honors_declared_kind_over_the_name(tmp_path):
+    # The file-vs-dir choice comes from MountSpec.seed, not the path: a dotted
+    # *directory* default (~/.config.d) is made a dir, while a no-extension *file*
+    # default (~/.netrc) is seeded as a file -- both of which the old splitext
+    # heuristic would have classified backwards.
+    home = str(tmp_path)
+    agent = SimpleNamespace(
+        default_mounts=(
+            MountSpec(path="~/.config.d"),
+            MountSpec(path="~/.netrc", seed="machine example\n"),
+        )
+    )
+    ensure_default_mount_sources(agent, home)
+    assert os.path.isdir(os.path.join(home, ".config.d"))
+    netrc = os.path.join(home, ".netrc")
+    assert os.path.isfile(netrc)
+    assert open(netrc).read() == "machine example\n"
