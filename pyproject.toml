@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-box"
 version = "0.0.1"
-description = "Run the claude CLI inside an unprivileged bubblewrap (bwrap) sandbox"
+description = "Run an agentic CLI (claude, copilot, …) inside an unprivileged bubblewrap (bwrap) + pasta sandbox"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -23,7 +23,7 @@ box = "agentbox.cli:main"
 test = ["pytest>=7"]
 
 [tool.setuptools]
-packages = ["agentbox"]
+packages = ["agentbox", "agentbox.agents"]
 
 [tool.pytest.ini_options]
 # Make `pytest -q tests/test_cli.py` importable from a clean checkout without
