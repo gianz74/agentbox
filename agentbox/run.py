@@ -179,7 +179,7 @@ def run(
 
     s = ensure_store(agent, config, store=store, home=h, install=install)
 
-    resolution = resolve(config, cwd, home=h)
+    resolution = resolve(config, agent, cwd, home=h)
     matched = resolve_context(config, cwd)
     rendered = render(resolution.mounts)
 
