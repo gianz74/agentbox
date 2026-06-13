@@ -15,8 +15,8 @@ from agentbox.config import (
 )
 
 SAMPLE = """\
-[setup]
-claude_version = "2.1.150"
+[agents.claude]
+version = "2.1.150"
 
 [[mounts]]
 path = "~/.claude"
@@ -51,8 +51,8 @@ def test_load_sample_config(tmp_path):
     cfg = load_config(_write(tmp_path, SAMPLE))
     assert isinstance(cfg, Config)
 
-    # [setup]
-    assert cfg.setup.claude_version == "2.1.150"
+    # [agents.<name>]
+    assert cfg.agents["claude"].version == "2.1.150"
 
     # global mounts, ~-expanded
     assert [m.path for m in cfg.mounts] == [
@@ -85,7 +85,7 @@ def test_load_sample_config(tmp_path):
 
 def test_empty_config_uses_defaults(tmp_path):
     cfg = load_config(_write(tmp_path, ""))
-    assert cfg.setup.claude_version is None
+    assert dict(cfg.agents) == {}
     assert cfg.mounts == ()
     assert cfg.contexts == ()
     assert dict(cfg.env) == {}
@@ -146,8 +146,8 @@ def test_missing_file_rejected(tmp_path):
 
 
 def test_parse_config_pure_dict():
-    cfg = parse_config({"setup": {"claude_version": "2.1.150"}})
-    assert cfg.setup.claude_version == "2.1.150"
+    cfg = parse_config({"agents": {"claude": {"version": "2.1.150"}}})
+    assert cfg.agents["claude"].version == "2.1.150"
 
 
 # --- closed schema: only known tables / keys are accepted --------------------
@@ -159,9 +159,18 @@ def test_unknown_top_level_table_rejected(tmp_path):
         load_config(_write(tmp_path, text))
 
 
-def test_setup_only_accepts_claude_version(tmp_path):
-    text = '[setup]\nextra = "nope"\n'
-    with pytest.raises(ConfigError, match=r"\[setup\]: unknown key\(s\) 'extra'"):
+def test_agent_table_only_accepts_version(tmp_path):
+    text = '[agents.claude]\nextra = "nope"\n'
+    with pytest.raises(
+        ConfigError, match=r"\[agents\.claude\]: unknown key\(s\) 'extra'"
+    ):
+        load_config(_write(tmp_path, text))
+
+
+def test_unknown_agent_name_rejected(tmp_path):
+    # [agents.<name>] is validated against the built-in registry.
+    text = '[agents.bogus]\nversion = "1.0"\n'
+    with pytest.raises(ConfigError, match=r"\[agents\.bogus\]: unknown agent 'bogus'"):
         load_config(_write(tmp_path, text))
 
 
@@ -214,14 +223,14 @@ def test_varless_config_parses_identically(tmp_path):
 
 
 def test_vars_expansion_across_sections(tmp_path):
-    # ${NAME} reaches every string: [setup], context `when`, and mounts.
+    # ${NAME} reaches every string: [agents.<name>], context `when`, and mounts.
     text = """\
 [vars]
 ROOT = "~/work"
 VER = "2.1.150"
 
-[setup]
-claude_version = "${VER}"
+[agents.claude]
+version = "${VER}"
 
 [[contexts]]
 name = "v"
@@ -230,7 +239,7 @@ when = ["${ROOT}/a"]
   path = "${ROOT}/a"
 """
     cfg = load_config(_write(tmp_path, text))
-    assert cfg.setup.claude_version == "2.1.150"
+    assert cfg.agents["claude"].version == "2.1.150"
     assert cfg.contexts[0].when == (os.path.expanduser("~/work/a"),)
     assert cfg.contexts[0].mounts[0].path == os.path.expanduser("~/work/a")
 
@@ -550,8 +559,10 @@ def test_ensure_user_config_writes_defaults(tmp_path):
     # the shipped default must itself parse + validate cleanly
     cfg = load_config(path)
     assert isinstance(cfg, Config)
-    assert "~/.claude" not in [m.path for m in cfg.mounts]  # ~ is expanded
-    assert os.path.expanduser("~/.claude") in [m.path for m in cfg.mounts]
+    # the default config is agent-neutral: no active mounts (an agent's own
+    # auth/config dirs come from its built-in default_mounts, not from here)
+    assert cfg.mounts == ()
+    assert os.path.expanduser("~/.claude") not in [m.path for m in cfg.mounts]
 
 
 def test_ensure_user_config_idempotent_no_overwrite(tmp_path):

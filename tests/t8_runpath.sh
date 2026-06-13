@@ -202,8 +202,8 @@ put("no_rebuild_after_edit", install_count[0] == 1, "installs=%s" % install_coun
 
 # --- pure stamp-freshness checks (no launch) -----------------------------------
 nopin = parse_config({})
-pin_ok = parse_config({"setup": {"claude_version": ver}})
-pin_bad = parse_config({"setup": {"claude_version": "1.2.3"}})
+pin_ok = parse_config({"agents": {"claude": {"version": ver}}})
+pin_bad = parse_config({"agents": {"claude": {"version": "1.2.3"}}})
 put("match_nopin", smod.store_matches(AG, nopin, store=store) is True)
 put("match_pin_ok", smod.store_matches(AG, pin_ok, store=store) is True)
 put("drift_pin", smod.store_matches(AG, pin_bad, store=store) is False)
