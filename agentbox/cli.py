@@ -24,6 +24,9 @@ from collections import namedtuple
 from . import preflight, run, store
 from .agents import AGENTS
 from .config import ConfigError, load_user_config
+from .mounts import MountError
+from .net import NetworkError
+from .sandbox import SandboxError
 
 #: The console entry-point name. Not an agent command; selects the management
 #: surface (``box <agent> setup|delete``).
@@ -189,10 +192,11 @@ def main(argv=None) -> int:
     except CliError as exc:
         print(f"box: {exc}", file=sys.stderr)
         return 2
-    except store.StoreError as exc:
-        # A store build can fail late (installer non-zero, copy unsupported for a
-        # lone-binary agent, missing source) on both the setup and run paths --
-        # surface it as a clean non-zero exit, not an uncaught traceback.
+    except (store.StoreError, SandboxError, NetworkError, MountError) as exc:
+        # The expected-failure domain errors of the run/setup paths: a store build
+        # failing late (installer non-zero, copy unsupported, missing source), a
+        # missing bwrap, a missing pasta or absent route, or a refused cwd. Surface
+        # each as a clean non-zero exit, not an uncaught traceback.
         print(f"box: {exc}", file=sys.stderr)
         return 1
 
