@@ -394,7 +394,10 @@ class ClaudeAgent(Agent):
         # point, as e.g. `git config` does on ~/.gitconfig). If a future claude
         # switches to atomic config writes, redirect it into a directory mount via
         # CLAUDE_CONFIG_DIR (which overrides the config base) instead.
-        MountSpec(path="~/.claude.json"),
+        #
+        # seed="{}\n": claude treats a 0-byte config as corrupt (logs a parse error
+        # and writes a junk backup), so a fresh source must read as an empty object.
+        MountSpec(path="~/.claude.json", seed="{}\n"),
     )
 
     def disable_self_update(self, store: Path) -> None:
