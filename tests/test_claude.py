@@ -25,6 +25,20 @@ from agentbox.agents import claude
 from agentbox.sandbox import Bind
 
 
+# --- sse_port_from_env --------------------------------------------------------
+
+def test_sse_port_from_env_reads_value():
+    assert claude.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "54321"}) == 54321
+
+
+def test_sse_port_from_env_absent_or_invalid():
+    assert claude.sse_port_from_env({}) is None
+    assert claude.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": ""}) is None
+    assert claude.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "nope"}) is None
+    assert claude.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "0"}) is None
+    assert claude.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "70000"}) is None
+
+
 # --- --mcp-config staging -----------------------------------------------------
 
 def test_stage_rewrites_file_and_binds(tmp_path):

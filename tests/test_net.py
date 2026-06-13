@@ -1,8 +1,10 @@
 """Tests for the pasta network plumbing (pure argv assembly).
 
-  * ``sse_port_from_env``: reads ``CLAUDE_CODE_SSE_PORT``, rejecting unset/invalid,
   * ``wrap_argv``: the fixed pasta preamble, and one ``-T`` per distinct forwarded
     port -- in first-seen order, with ``None`` entries and duplicates dropped.
+
+(The IDE SSE port reader ``sse_port_from_env`` is claude-specific and lives in the
+claude agent now; it is covered by ``test_claude``.)
 """
 
 from agentbox import net
@@ -11,20 +13,6 @@ GW = "10.0.2.2"
 _PREAMBLE = [
     "pasta", "--config-net", "-f", "-q", "--no-map-gw", "--dns-forward", GW,
 ]
-
-
-# --- sse_port_from_env --------------------------------------------------------
-
-def test_sse_port_from_env_reads_value():
-    assert net.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "54321"}) == 54321
-
-
-def test_sse_port_from_env_absent_or_invalid():
-    assert net.sse_port_from_env({}) is None
-    assert net.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": ""}) is None
-    assert net.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "nope"}) is None
-    assert net.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "0"}) is None
-    assert net.sse_port_from_env({"CLAUDE_CODE_SSE_PORT": "70000"}) is None
 
 
 # --- wrap_argv ----------------------------------------------------------------

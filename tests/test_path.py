@@ -1,15 +1,13 @@
-"""PATH handling: opt-in base resolution (`resolve_base_path`) and the
-launcher-prefix prepend + dedup applied by `store_launch`."""
+"""PATH handling: opt-in base resolution (`resolve_base_path`, in the run path) and
+the launcher-prefix prepend + dedup applied by `store_launch` (in the store)."""
 
+from agentbox.agents import AGENTS
 from agentbox.config import parse_config
-from agentbox.lifecycle import (
-    DEFAULT_PATH,
-    LAUNCHER_DIR,
-    _dedup_path,
-    resolve_base_path,
-    store_launch,
-)
+from agentbox.run import resolve_base_path
+from agentbox.sandbox import DEFAULT_PATH
+from agentbox.store import LAUNCHER_DIR, _dedup_path, store_launch
 
+CLAUDE = AGENTS["claude"]
 HOST = {"PATH": "/host/bin:/usr/bin:/bin"}
 
 
@@ -67,7 +65,7 @@ def test_store_launch_prepends_launcher_and_dedups(tmp_path):
     launcher.mkdir()
     # base repeats ~/.local/bin (the launcher prefix already adds it) and /usr/bin.
     base = f"{home}/.local/bin:/usr/bin:/host/bin:/usr/bin"
-    sl = store_launch(home, launcher, store=tmp_path / "store", base_path=base)
+    sl = store_launch(CLAUDE, home, launcher, store=tmp_path / "store", base_path=base)
     parts = sl.path.split(":")
     assert parts[0] == LAUNCHER_DIR
     assert parts[1] == f"{home}/.local/bin"

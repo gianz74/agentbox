@@ -75,11 +75,13 @@ printf '== masking driver: proj=%s ==\n' "$PROJ"
 # in-sandbox results land in $PROJ/results. Prints the temp root for cleanup.
 TMP=$(python3 - "$PROJ" "$SIB" "$ABSENT" "$PROBE" <<'PY'
 import os, subprocess, sys, tempfile
-from agentbox import lifecycle, sandbox
+from agentbox import sandbox, store as smod
+from agentbox.agents import AGENTS
 from agentbox.config import parse_config
 from agentbox.mounts import render, resolve
 from agentbox.sandbox import SandboxSpec, host_identity
 
+AG = AGENTS["claude"]
 proj, sib, absent, probe = sys.argv[1:5]
 ident = host_identity()
 home = ident.home
@@ -101,8 +103,8 @@ with open(payload, "w") as f:
 os.chmod(payload, 0o755)
 binsrc = os.path.join(fakehost, ".local", "bin"); os.makedirs(binsrc)
 os.symlink(payload, os.path.join(binsrc, "claude"))
-lifecycle.install_store(store=store, method="copy", source_home=fakehost)
-sl = lifecycle.store_launch(home, launcher, store=store, base_path="/usr/bin:/bin")
+smod.install_store(AG, store=store, method="copy", source_home=fakehost)
+sl = smod.store_launch(AG, home, launcher, store=store, base_path="/usr/bin:/bin")
 
 # A context whose mount set is the project (parity, rw) with `secrets` masked, plus
 # a mount at a path absent on this machine (rendered *-bind-try, so it is skipped).

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# CLI wiring: the `box` console entry point really drives `lifecycle`.
-# Earlier drivers exercised `lifecycle.run/setup/delete` directly; this one goes
+# CLI wiring: the `box` console entry point really drives the store/preflight/run path.
+# Earlier drivers exercised the run/setup/delete calls directly; this one goes
 # through `cli.main`/`cli.dispatch` (the binary's own dispatch) and checks that
-#   - `setup --from-host` runs the real lifecycle: it builds the frozen store
+#   - `setup --from-host` runs the real setup path: it builds the frozen store
 #     offline (the copy path), exits 0, prints the `frozen claude store ready`
 #     line, and leaves a present, version-stamped, frozen store -- never the old
 #     `not implemented` stub text,
 #   - `delete` answering N keeps the store and exits 1; answering Y removes it and
 #     exits 0 (real `input`-driven confirm, fed via a replaced stdin),
-#   - the run path dispatches to `lifecycle.run` with the parsed leading-block
+#   - an agent shim dispatches to `run.run` with the parsed leading-block
 #     mounts and the verbatim claude args, propagating its exit code,
 #   - the subcommand surface is still exactly {setup, delete}, and no stub text
 #     ("not implemented") survives anywhere in cli.py.
@@ -35,7 +35,7 @@ trap 'rm -rf "$TMPHOME"' EXIT
 echo "== cli driver: HOME=$TMPHOME (synthetic native install + redirected store) =="
 
 # Redirect identity/config/store entirely under the temp HOME: setup derives both
-# the store dest (store_dir()) and the copy source (expanduser('~')) from $HOME,
+# the store dest (store_dir(AG)) and the copy source (expanduser('~')) from $HOME,
 # and config lands under $XDG_CONFIG_HOME.
 export HOME="$TMPHOME"
 export XDG_CONFIG_HOME="$TMPHOME/.config"
@@ -44,9 +44,11 @@ HOME="$TMPHOME" XDG_CONFIG_HOME="$TMPHOME/.config" python3 - "$TMPHOME" <<'PY'
 import contextlib, io, json, os, sys
 from pathlib import Path
 
-from agentbox import cli, lifecycle
+from agentbox import cli, run as rmod, store as smod
+from agentbox.agents import AGENTS
 from agentbox.cli import Mount
 
+AG = AGENTS["claude"]
 home = sys.argv[1]
 ver = "9.9.9"
 
@@ -68,52 +70,53 @@ binsrc = os.path.join(home, ".local", "bin")
 os.makedirs(binsrc)
 os.symlink(payload, os.path.join(binsrc, "claude"))
 
-store = lifecycle.store_dir()  # = $HOME/.local/share/box/store
+store = smod.store_dir(AG)  # = $HOME/.local/share/box/claude/store
 
 # --- setup --from-host, through cli.main --------------------------------------
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    rc_setup = cli.main(["setup", "--from-host"])
+    rc_setup = cli.main(["claude", "setup", "--from-host"])
 out = buf.getvalue()
 put("setup_rc", rc_setup == 0, "rc=%r" % rc_setup)
 put("setup_ready_msg", "frozen claude store ready" in out, repr(out[-200:]))
 put("setup_no_stub", "not implemented" not in out, repr(out))
-put("setup_store_present", lifecycle.store_present(store),
-    "present=%s at %s" % (lifecycle.store_present(store), store))
-put("setup_version", lifecycle.installed_version(store) == ver,
-    "ver=%r" % lifecycle.installed_version(store))
-stamp = lifecycle.read_stamp(store) or {}
+put("setup_store_present", smod.store_present(AG, store),
+    "present=%s at %s" % (smod.store_present(AG, store), store))
+put("setup_version", smod.installed_version(AG, store) == ver,
+    "ver=%r" % smod.installed_version(AG, store))
+stamp = smod.read_stamp(store) or {}
 put("setup_stamped_copy", stamp.get("method") == "copy", "stamp=%r" % stamp)
 cfg = Path(store) / ".claude.json"
 frozen = cfg.exists() and json.loads(cfg.read_text()).get("autoUpdates") is False
 put("setup_frozen", frozen, "claude.json=%r" % (cfg.read_text() if cfg.exists() else None))
 
 # --- delete N (keep) then Y (remove), through cli.main ------------------------
-# cmd_delete -> lifecycle.delete() with the default input-driven confirm; feed the
+# cmd_delete -> store.delete(AG) with the default input-driven confirm; feed the
 # answer via a replaced sys.stdin (input() reads a line from it when non-interactive).
 real_stdin = sys.stdin
 sys.stdin = io.StringIO("n\n")
 with contextlib.redirect_stdout(io.StringIO()):
-    rc_del_n = cli.main(["delete"])
+    rc_del_n = cli.main(["claude", "delete"])
 put("delete_abort_rc", rc_del_n == 1, "rc=%r" % rc_del_n)
-put("delete_abort_keeps_store", lifecycle.store_present(store))
+put("delete_abort_keeps_store", smod.store_present(AG, store))
 
 sys.stdin = io.StringIO("y\n")
 with contextlib.redirect_stdout(io.StringIO()):
-    rc_del_y = cli.main(["delete"])
+    rc_del_y = cli.main(["claude", "delete"])
 sys.stdin = real_stdin
 put("delete_rc", rc_del_y == 0, "rc=%r" % rc_del_y)
 put("delete_removes_store",
-    not lifecycle.store_present(store) and not os.path.exists(store),
+    not smod.store_present(AG, store) and not os.path.exists(store),
     "still=%s" % os.path.exists(store))
 
-# --- run path dispatches to lifecycle.run (seam-mocked) -----------------------
+# --- agent shim dispatches to run.run (seam-mocked) ---------------------------
 seen = {}
-lifecycle.run = lambda mounts, claude_args: (
-    seen.update(mounts=list(mounts), args=list(claude_args)) or 7)
-rc_run = cli.dispatch(["--mount", "/data:ro", "--", "-p", "hi"])
+rmod.run = lambda agent, mounts, claude_args: (
+    seen.update(agent=agent, mounts=list(mounts), args=list(claude_args)) or 7)
+rc_run = cli.dispatch(["--mount", "/data:ro", "--", "-p", "hi"], prog="claude")
 put("run_dispatches", seen.get("args") == ["-p", "hi"]
-    and seen.get("mounts") == [Mount("/data", True)], "seen=%r" % seen)
+    and seen.get("mounts") == [Mount("/data", True)]
+    and seen.get("agent") is AG, "seen=%r" % seen)
 put("run_rc_propagated", rc_run == 7, "rc=%r" % rc_run)
 
 # --- surface + no stub text ---------------------------------------------------
@@ -125,7 +128,7 @@ put("no_stub_text_in_cli", "not implemented" not in src,
 
 print("-----------")
 ok = all(v for _, v in res)
-print("CLI: %s -- box entry point drives lifecycle end to end."
+print("CLI: %s -- box entry point drives the store/run path end to end."
       % ("PASS" if ok else "FAIL"))
 sys.exit(0 if ok else 1)
 PY
