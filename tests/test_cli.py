@@ -113,19 +113,28 @@ def test_no_args_is_empty_passthrough():
     assert agent_args == []
 
 
-# --- store-build failures exit cleanly, not as a traceback -------------------
+# --- expected domain failures exit cleanly, not as a traceback ---------------
 
 
-def test_main_catches_store_error(monkeypatch, capsys):
-    # A store build can fail late (a failed native installer, or --from-host for a
-    # lone-binary agent); main must turn it into a clean non-zero exit, not let a
-    # StoreError escape as an uncaught traceback.
+@pytest.mark.parametrize(
+    "exc",
+    [
+        cli.store.StoreError("nope"),  # store build failed late
+        cli.SandboxError("no bwrap"),  # bwrap missing on the run path
+        cli.NetworkError("no pasta"),  # pasta missing / no route
+        cli.MountError("bad cwd"),  # a refused working directory
+    ],
+)
+def test_main_catches_domain_errors(monkeypatch, capsys, exc):
+    # The run/setup paths surface a handful of expected failures (a late store
+    # build, a missing bwrap/pasta or absent route, a refused cwd); main must turn
+    # each into a clean exit 1, not let it escape as an uncaught traceback.
     def boom(*a, **k):
-        raise cli.store.StoreError("nope")
+        raise exc
 
     monkeypatch.setattr(cli, "dispatch", boom)
-    assert cli.main(["claude", "setup"]) == 1
-    assert "box: nope" in capsys.readouterr().err
+    assert cli.main(["claude"]) == 1
+    assert f"box: {exc}" in capsys.readouterr().err
 
 
 # --- leading-block mount parse ------------------------------------------------

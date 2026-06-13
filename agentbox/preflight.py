@@ -287,6 +287,7 @@ def setup(
         store=store.store_dir(agent, home=h),
         method="copy" if from_host else "native",
         version=version,
+        source_home=h,  # the copy source honors the same home override as the dest
     )
     print(
         f"setup: frozen {agent.command} store ready at {s} "
