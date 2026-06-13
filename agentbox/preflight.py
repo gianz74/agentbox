@@ -16,6 +16,7 @@ shim lives.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -223,7 +224,9 @@ def shim_guidance(status: ShimStatus) -> list[str]:
             "wrapper. Shadow it with a shim earlier on PATH:"
         )
 
-    lines.append(f"    ln -sf {entry} {slot}")
+    # Quote both paths: the command is meant to be copy-pasted, so a $HOME or
+    # wrapper path with a space/shell-special char must survive the shell.
+    lines.append(f"    ln -sf {shlex.quote(entry)} {shlex.quote(slot)}")
     if status.resolved != slot:
         lines.append(
             f'    # keep {slot_dir} ahead on PATH, e.g. in ~/.profile: '

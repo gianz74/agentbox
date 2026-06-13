@@ -189,7 +189,10 @@ def main(argv=None) -> int:
     prog = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else WRAPPER_ENTRY
     try:
         return dispatch(argv, prog=prog)
-    except CliError as exc:
+    except (CliError, ConfigError) as exc:
+        # A bad argument or an invalid user config: a user-input error. The run
+        # path loads the config lazily (so a malformed config.toml surfaces here on
+        # a bare shim invocation, not just at setup), same clean exit as cmd_setup.
         print(f"box: {exc}", file=sys.stderr)
         return 2
     except (store.StoreError, SandboxError, NetworkError, MountError) as exc:
