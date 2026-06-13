@@ -15,8 +15,8 @@ authors = [{ name = "Giampaolo Fresi Roglia" }]
 dependencies = []
 
 [project.scripts]
-# Internal entry point. The user-facing command is `claude` -- a shim on $PATH
-# that points here.
+# Internal entry point. Each agent's user-facing command (`claude`, `copilot`,
+# ...) is a shim on $PATH pointing here; `box` selects the agent by argv[0].
 box = "agentbox.cli:main"
 
 [project.optional-dependencies]
