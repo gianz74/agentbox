@@ -1,4 +1,6 @@
-"""Tests for the MCP/IDE bridge plumbing (pure logic + the in-sandbox bootstrap).
+"""Tests for the claude agent's MCP/IDE bridge internals (pure logic + the
+in-sandbox bootstrap). Relocated from ``test_mcp`` when the plumbing moved into
+:mod:`agentbox.agents.claude`.
 
   * ``--mcp-config`` staging: a real file is copied and its operand rewritten to
     the in-sandbox staged path with a single read-only bind; inline JSON and
@@ -19,7 +21,7 @@ import sys
 
 import pytest
 
-from agentbox import mcp
+from agentbox.agents import claude
 from agentbox.sandbox import Bind
 
 
@@ -31,12 +33,12 @@ def test_stage_rewrites_file_and_binds(tmp_path):
     stage = tmp_path / "stage"
     stage.mkdir()
 
-    args, binds = mcp.stage_mcp_configs(
+    args, binds = claude.stage_mcp_configs(
         ["--mcp-config", str(cfg), "--print"], str(stage)
     )
 
-    assert args == ("--mcp-config", f"{mcp.MCP_STAGE_DIR}/servers.json", "--print")
-    assert binds == (Bind(str(stage), mcp.MCP_STAGE_DIR, mode="ro"),)
+    assert args == ("--mcp-config", f"{claude.MCP_STAGE_DIR}/servers.json", "--print")
+    assert binds == (Bind(str(stage), claude.MCP_STAGE_DIR, mode="ro"),)
     # The file was actually copied into the staging dir, byte-for-byte.
     assert (stage / "servers.json").read_text() == '{"mcpServers": {}}'
 
@@ -47,9 +49,9 @@ def test_stage_equals_form(tmp_path):
     stage = tmp_path / "stage"
     stage.mkdir()
 
-    args, binds = mcp.stage_mcp_configs([f"--mcp-config={cfg}"], str(stage))
+    args, binds = claude.stage_mcp_configs([f"--mcp-config={cfg}"], str(stage))
 
-    assert args == (f"--mcp-config={mcp.MCP_STAGE_DIR}/s.json",)
+    assert args == (f"--mcp-config={claude.MCP_STAGE_DIR}/s.json",)
     assert len(binds) == 1
 
 
@@ -59,7 +61,7 @@ def test_stage_passes_through_inline_json_and_missing(tmp_path):
     inline = '{"mcpServers": {"x": {}}}'
     missing = str(tmp_path / "nope.json")
 
-    args, binds = mcp.stage_mcp_configs(
+    args, binds = claude.stage_mcp_configs(
         ["--mcp-config", inline, "--mcp-config", missing], str(stage)
     )
 
@@ -72,7 +74,7 @@ def test_stage_passes_through_inline_json_and_missing(tmp_path):
 def test_stage_no_mcp_args_is_identity(tmp_path):
     stage = tmp_path / "stage"
     stage.mkdir()
-    args, binds = mcp.stage_mcp_configs(["--print", "hello"], str(stage))
+    args, binds = claude.stage_mcp_configs(["--print", "hello"], str(stage))
     assert args == ("--print", "hello")
     assert binds == ()
 
@@ -85,13 +87,13 @@ def _inline(servers):
 
 def test_loopback_ports_from_inline_json():
     cfg = _inline({"emacs-tools": {"type": "http", "url": "http://localhost:43055/mcp/x"}})
-    assert mcp.loopback_mcp_ports(["--mcp-config", cfg, "--print"]) == [43055]
+    assert claude.loopback_mcp_ports(["--mcp-config", cfg, "--print"]) == [43055]
 
 
 def test_loopback_ports_from_file(tmp_path):
     cfg = tmp_path / "servers.json"
     cfg.write_text(_inline({"t": {"url": "http://127.0.0.1:7000/mcp"}}))
-    assert mcp.loopback_mcp_ports([f"--mcp-config={cfg}"]) == [7000]
+    assert claude.loopback_mcp_ports([f"--mcp-config={cfg}"]) == [7000]
 
 
 def test_loopback_ports_multiple_servers_deduped_in_order():
@@ -100,7 +102,7 @@ def test_loopback_ports_multiple_servers_deduped_in_order():
         "b": {"url": "http://127.0.0.1:6000/"},
         "c": {"url": "http://localhost:5000/again"},  # duplicate port -> dropped
     })
-    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 6000]
+    assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 6000]
 
 
 def test_loopback_ports_accepts_all_loopback_spellings():
@@ -109,7 +111,7 @@ def test_loopback_ports_accepts_all_loopback_spellings():
         "b": {"url": "http://127.0.0.1:5001/"},
         "c": {"url": "http://[::1]:5002/"},
     })
-    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 5001, 5002]
+    assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 5001, 5002]
 
 
 def test_loopback_ports_scheme_default_when_absent():
@@ -117,7 +119,7 @@ def test_loopback_ports_scheme_default_when_absent():
         "h": {"url": "http://localhost/mcp"},     # -> 80
         "s": {"url": "https://127.0.0.1/mcp"},    # -> 443
     })
-    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [80, 443]
+    assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [80, 443]
 
 
 def test_loopback_ports_skips_non_loopback():
@@ -127,7 +129,7 @@ def test_loopback_ports_skips_non_loopback():
         "ok": {"url": "http://localhost:43055/mcp"},
     })
     # Only the loopback URL is forwarded; the LAN/public hosts must not leak.
-    assert mcp.loopback_mcp_ports(["--mcp-config", cfg]) == [43055]
+    assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [43055]
 
 
 def test_loopback_ports_skips_malformed_and_missing():
@@ -135,7 +137,7 @@ def test_loopback_ports_skips_malformed_and_missing():
     not_json = "{not json"
     no_url = _inline({"x": {"type": "stdio", "command": "foo"}})
     bad_shape = json.dumps({"mcpServers": "nope"})
-    assert mcp.loopback_mcp_ports([
+    assert claude.loopback_mcp_ports([
         "--mcp-config", missing,
         "--mcp-config", not_json,
         "--mcp-config", no_url,
@@ -144,19 +146,19 @@ def test_loopback_ports_skips_malformed_and_missing():
 
 
 def test_loopback_ports_none_without_mcp_config():
-    assert mcp.loopback_mcp_ports(["--print", "hi"]) == []
+    assert claude.loopback_mcp_ports(["--print", "hi"]) == []
 
 
 # --- lockfile reconciliation --------------------------------------------------
 
 def test_lockfile_path():
     assert (
-        mcp.lockfile_path("/home/u", 54321) == "/home/u/.claude/ide/54321.lock"
+        claude.lockfile_path("/home/u", 54321) == "/home/u/.claude/ide/54321.lock"
     )
 
 
 def test_normalize_workspace_folders():
-    assert mcp.normalize_workspace_folders(["/a/b/", "/c", "/"]) == [
+    assert claude.normalize_workspace_folders(["/a/b/", "/c", "/"]) == [
         "/a/b",
         "/c",
         "/",
@@ -165,7 +167,7 @@ def test_normalize_workspace_folders():
 
 def test_apply_lockfile_patch_changes_pid_and_folders():
     data = {"pid": 999999, "workspaceFolders": ["/proj/"], "transport": "ws"}
-    patched, changed = mcp.apply_lockfile_patch(data, 7)
+    patched, changed = claude.apply_lockfile_patch(data, 7)
     assert changed is True
     assert patched["pid"] == 7
     assert patched["workspaceFolders"] == ["/proj"]
@@ -176,7 +178,7 @@ def test_apply_lockfile_patch_changes_pid_and_folders():
 
 def test_apply_lockfile_patch_noop_when_already_correct():
     data = {"pid": 7, "workspaceFolders": ["/proj"]}
-    patched, changed = mcp.apply_lockfile_patch(data, 7)
+    patched, changed = claude.apply_lockfile_patch(data, 7)
     assert changed is False
     assert patched == data
 
@@ -184,17 +186,17 @@ def test_apply_lockfile_patch_noop_when_already_correct():
 # --- entry_argv ---------------------------------------------------------------
 
 def test_entry_argv_without_sse_is_plain_claude():
-    argv = mcp.entry_argv("/h/.local/bin/claude", ["-p", "hi"], home="/h", sse_port=None)
+    argv = claude.entry_argv("/h/.local/bin/claude", ["-p", "hi"], home="/h", sse_port=None)
     assert argv == ("/h/.local/bin/claude", "-p", "hi")
 
 
 def test_entry_argv_with_sse_wraps_in_bootstrap():
-    argv = mcp.entry_argv(
+    argv = claude.entry_argv(
         "/h/.local/bin/claude", ["-p", "hi"], home="/h", sse_port=4321, python="/usr/bin/python3"
     )
     assert argv[0] == "/usr/bin/python3"
     assert argv[1] == "-c"
-    assert argv[2] == mcp._BOOTSTRAP
+    assert argv[2] == claude._BOOTSTRAP
     assert argv[3] == "/h/.claude/ide/4321.lock"
     assert argv[4] == "/h/.local/bin/claude"
     assert argv[5:] == ("-p", "hi")
@@ -222,7 +224,7 @@ def test_bootstrap_patches_lockfile_and_execs(tmp_path):
     fake_claude.chmod(0o755)
 
     rc = subprocess.run(
-        [sys.executable, "-c", mcp._BOOTSTRAP, str(lock), str(fake_claude), "--print", "x"]
+        [sys.executable, "-c", claude._BOOTSTRAP, str(lock), str(fake_claude), "--print", "x"]
     ).returncode
     assert rc == 0
     assert marker.read_text() == "--print x"  # claude was exec'd with its args
@@ -233,7 +235,7 @@ def test_bootstrap_patches_lockfile_and_execs(tmp_path):
         # The pid was rewritten to the sentinel and the folder slash stripped --
         # exactly what apply_lockfile_patch describes for that pid.
         assert sentinel_pid != original["pid"]
-        expected, _ = mcp.apply_lockfile_patch(original, sentinel_pid)
+        expected, _ = claude.apply_lockfile_patch(original, sentinel_pid)
         assert patched == expected
         # The sentinel really runs (orphaned by the exec, alive here since there
         # is no sandbox to tear it down) and is owned by this uid.
