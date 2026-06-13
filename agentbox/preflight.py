@@ -282,7 +282,12 @@ def setup(
             return 1
 
     version = agent_version(config, agent.name)
-    s = store.install_store(agent, method="copy" if from_host else "native", version=version)
+    s = store.install_store(
+        agent,
+        store=store.store_dir(agent, home=h),
+        method="copy" if from_host else "native",
+        version=version,
+    )
     print(
         f"setup: frozen {agent.command} store ready at {s} "
         f"({agent.command} {store.installed_version(agent, s)})"
