@@ -26,15 +26,17 @@ pasta exit when the (ephemeral) sandbox does.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 
+# The IDE SSE port and its reader are claude-specific; they live in the claude
+# agent now (the canonical home). Re-exported here transitionally so the run
+# path's ``net.sse_port_from_env`` keeps working until Phase 2 routes the port
+# through ``agent.launch_hook``; the re-export is removed then.
+from .agents.claude import SSE_PORT_ENV, sse_port_from_env  # noqa: F401
+
 PASTA = "pasta"
 _PASTA_PACKAGE = "passt"
-
-#: The IDE sets this when it spawns ``claude`` with a local MCP/SSE server.
-SSE_PORT_ENV = "CLAUDE_CODE_SSE_PORT"
 
 
 class NetworkError(Exception):
@@ -72,23 +74,6 @@ def gateway() -> str:
     raise NetworkError(
         "no default gateway found (need an outbound route for the sandbox network)"
     )
-
-
-def sse_port_from_env(env: "os._Environ[str] | dict[str, str] | None" = None) -> int | None:
-    """The IDE SSE port from ``CLAUDE_CODE_SSE_PORT``, or ``None`` if unset/invalid.
-
-    The IDE exports it when launching ``claude``; the wrapper reads it from its own
-    environment to forward exactly that one port into the sandbox.
-    """
-    source = os.environ if env is None else env
-    raw = source.get(SSE_PORT_ENV)
-    if not raw:
-        return None
-    try:
-        port = int(raw)
-    except ValueError:
-        return None
-    return port if 0 < port < 65536 else None
 
 
 def wrap_argv(

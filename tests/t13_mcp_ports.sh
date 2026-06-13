@@ -35,7 +35,7 @@ GW=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'via \K[0-9.]+' | head -1)
 [ -n "$GW" ] || fatal "no default gateway found (the hot path is pasta-fronted)"
 
 echo "== unit suite: --mcp-config port extractor + wrap_argv multi-port =="
-python3 -m pytest -q "$REPO/tests/test_mcp.py" "$REPO/tests/test_net.py" \
+python3 -m pytest -q "$REPO/tests/test_claude.py" "$REPO/tests/test_net.py" \
   || fatal "MCP/net unit suite failed"
 
 RESULTS=$(mktemp)
