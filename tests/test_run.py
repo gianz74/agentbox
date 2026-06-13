@@ -125,6 +125,19 @@ def test_ensure_default_mount_sources_never_clobbers_existing(tmp_path):
     assert open(cfg).read() == '{"keep": 1}'  # existing config left untouched
 
 
+def test_ensure_default_mount_sources_leaves_a_dangling_symlink_alone(tmp_path):
+    # os.path.exists() is False for a broken symlink, but the link entry exists, so
+    # seeding it would crash (mkdir over the existing link -> FileExistsError) or
+    # write through the dangling link. lexists() treats it as present and skips it.
+    home = str(tmp_path)
+    link = os.path.join(home, ".claude")
+    os.symlink(os.path.join(home, "nonexistent-target"), link)
+    agent = SimpleNamespace(default_mounts=(MountSpec(path="~/.claude"),))
+    ensure_default_mount_sources(agent, home)  # must not raise
+    assert os.path.islink(link)  # left intact
+    assert not os.path.exists(link)  # still dangling, not materialized
+
+
 def test_ensure_default_mount_sources_honors_declared_kind_over_the_name(tmp_path):
     # The file-vs-dir choice comes from MountSpec.seed, not the path: a dotted
     # *directory* default (~/.config.d) is made a dir, while a no-extension *file*
