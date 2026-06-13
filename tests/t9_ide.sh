@@ -36,7 +36,7 @@ GW=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'via \K[0-9.]+' | head -1)
 [ -n "$GW" ] || fatal "no default gateway found (the hot path is pasta-fronted)"
 
 echo "== unit suite: staging, lockfile patch, bootstrap =="
-python3 -m pytest -q "$REPO/tests/test_mcp.py" || fatal "MCP unit suite failed"
+python3 -m pytest -q "$REPO/tests/test_claude.py" || fatal "MCP unit suite failed"
 
 RESULTS=$(mktemp)
 cleanup() { rm -f "$RESULTS"; rm -rf "${TMP:-}"; }
