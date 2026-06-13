@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-sandbox"
+name = "agent-box"
 version = "0.0.1"
 description = "Run the claude CLI inside an unprivileged bubblewrap (bwrap) sandbox"
 readme = "README.md"
@@ -17,13 +17,13 @@ dependencies = []
 [project.scripts]
 # Internal entry point. The user-facing command is `claude` -- a shim on $PATH
 # that points here.
-claude-sandbox = "claude_sandbox.cli:main"
+box = "agentbox.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
 [tool.setuptools]
-packages = ["claude_sandbox"]
+packages = ["agentbox"]
 
 [tool.pytest.ini_options]
 # Make `pytest -q tests/test_cli.py` importable from a clean checkout without

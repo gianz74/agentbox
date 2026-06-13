@@ -1,4 +1,4 @@
-"""claude-sandbox -- run the ``claude`` CLI inside an unprivileged bwrap sandbox.
+"""box -- run the ``claude`` CLI inside an unprivileged bwrap sandbox.
 
 Module layout:
 

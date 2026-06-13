@@ -75,17 +75,17 @@ printf '== masking driver: proj=%s ==\n' "$PROJ"
 # in-sandbox results land in $PROJ/results. Prints the temp root for cleanup.
 TMP=$(python3 - "$PROJ" "$SIB" "$ABSENT" "$PROBE" <<'PY'
 import os, subprocess, sys, tempfile
-from claude_sandbox import lifecycle, sandbox
-from claude_sandbox.config import parse_config
-from claude_sandbox.mounts import render, resolve
-from claude_sandbox.sandbox import SandboxSpec, host_identity
+from agentbox import lifecycle, sandbox
+from agentbox.config import parse_config
+from agentbox.mounts import render, resolve
+from agentbox.sandbox import SandboxSpec, host_identity
 
 proj, sib, absent, probe = sys.argv[1:5]
 ident = host_identity()
 home = ident.home
 ver = "9.9.9"
 
-tmp = tempfile.mkdtemp(prefix="claude-sandbox-t7.")
+tmp = tempfile.mkdtemp(prefix="box-t7.")
 fakehost = os.path.join(tmp, "fakehost")
 store = os.path.join(tmp, "store")
 launcher = os.path.join(tmp, "launcher"); os.makedirs(launcher)

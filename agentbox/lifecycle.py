@@ -53,7 +53,7 @@ from .sandbox import DEFAULT_PATH, Bind, SandboxSpec, host_identity
 
 # Store location, relative to $HOME. A wrapper-private directory the native
 # install is redirected into; the host's own ~/.local install is left alone.
-STORE_DIR_REL = (".local", "share", "claude-sandbox", "store")
+STORE_DIR_REL = (".local", "share", "box", "store")
 
 # The native install's layout, relative to the redirected HOME (the store root).
 _BIN_CLAUDE_REL = (".local", "bin", "claude")
@@ -63,7 +63,7 @@ _SHARE_CLAUDE_REL = (".local", "share", "claude")
 # host ~/.local can shadow it; the run path prepends it to PATH ahead of
 # ~/.local/bin, so a bare `claude` resolves to the store binary regardless of
 # what is mounted over ~/.local or what `claude` shim sits further down PATH.
-LAUNCHER_DIR = "/opt/claude-sandbox/bin"
+LAUNCHER_DIR = "/opt/box/bin"
 
 # The native installer. Run with HOME redirected into the store so the install
 # lands under <store>/.local rather than the real ~/.local.
@@ -352,7 +352,7 @@ def store_launch(
 # through the sandbox; the absolute-path exec on the run path makes this robust
 # wherever the shim lives.
 SHIM_COMMAND = "claude"
-WRAPPER_ENTRY = "claude-sandbox"
+WRAPPER_ENTRY = "box"
 
 # Preferred shim location, relative to $HOME. A directory under the home keeps the
 # shim out of the shared read-only host userspace, so it is never carried into the
@@ -431,7 +431,7 @@ def check_userns(*, probe=probe_userns) -> Check:
         "unprivileged user namespaces are restricted on this host, so the "
         "sandbox cannot start. Enable them as root, for example:\n"
         "    sysctl -w kernel.unprivileged_userns_clone=1\n"
-        "or permit your user in the host's AppArmor userns policy. claude-sandbox "
+        "or permit your user in the host's AppArmor userns policy. box "
         "will not change the sysctl or the AppArmor policy for you.",
     )
 
@@ -465,7 +465,7 @@ class ShimStatus:
     found); ``is_wrapper`` is True when that is this wrapper's entry point.
     ``slot_path`` is the preferred shim location (``~/bin/claude``); ``slot_taken``
     flags a non-wrapper file already sitting there (e.g. a leftover legacy shim).
-    ``wrapper_entry`` is where ``claude-sandbox`` itself lives, used in the suggested
+    ``wrapper_entry`` is where ``box`` itself lives, used in the suggested
     commands.
     """
 
@@ -478,7 +478,7 @@ class ShimStatus:
 
 def _resolves_to_wrapper(candidate, wrapper_entry, realpath) -> bool:
     """True if *candidate* (a path, or ``None``) is this wrapper: it resolves to a
-    file named ``claude-sandbox`` or to the same file as *wrapper_entry*."""
+    file named ``box`` or to the same file as *wrapper_entry*."""
     if candidate is None:
         return False
     real = realpath(candidate)
@@ -497,7 +497,7 @@ def resolve_shim(
 ) -> ShimStatus:
     """Resolve how ``claude`` runs given the search *path* and the user's *home*.
 
-    *path* is a ``PATH``-style string; *wrapper_entry* is where ``claude-sandbox``
+    *path* is a ``PATH``-style string; *wrapper_entry* is where ``box``
     lives (defaulting to a lookup on the real ``PATH``). Pure but for the injected
     lookups, so it is exercised with a temporary ``PATH`` and on-disk fixtures.
     """
@@ -555,7 +555,7 @@ def shim_guidance(status: ShimStatus) -> list[str]:
             "command above replaces it"
         )
     lines.append(
-        "claude-sandbox will not create the shim or edit your shell config -- run "
+        "box will not create the shim or edit your shell config -- run "
         "the command yourself."
     )
     return lines
@@ -874,8 +874,8 @@ def run(
     # The launcher and MCP staging directories hold per-launch files bound into
     # the sandbox; both must outlive the launch (the bind sources are read when
     # the sandbox starts), so they wrap the whole boot.
-    with tempfile.TemporaryDirectory(prefix="claude-sandbox-launcher.") as launcher_dir, \
-            tempfile.TemporaryDirectory(prefix="claude-sandbox-mcp.") as mcp_stage:
+    with tempfile.TemporaryDirectory(prefix="box-launcher.") as launcher_dir, \
+            tempfile.TemporaryDirectory(prefix="box-mcp.") as mcp_stage:
         sl = store_launch(
             h, launcher_dir, store=s,
             base_path=resolve_base_path(config, matched, host_env),

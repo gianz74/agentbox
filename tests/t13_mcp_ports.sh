@@ -48,9 +48,9 @@ printf '== mcp-ports driver: gw=%s ==\n' "$GW"
 # into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import json, os, socket, subprocess, sys, tempfile, time, urllib.request
-from claude_sandbox import lifecycle
-from claude_sandbox.config import parse_config
-from claude_sandbox.sandbox import host_identity
+from agentbox import lifecycle
+from agentbox.config import parse_config
+from agentbox.sandbox import host_identity
 
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
@@ -58,7 +58,7 @@ def put(k, ok, detail=""):
     checks[k] = "PASS" if ok else ("FAIL(%s)" % detail if detail else "FAIL")
 
 ident = host_identity()
-tmp = tempfile.mkdtemp(prefix="claude-sandbox-t13.")
+tmp = tempfile.mkdtemp(prefix="box-t13.")
 fakehost = os.path.join(tmp, "fakehost")
 store = os.path.join(tmp, "store")
 

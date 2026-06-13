@@ -48,9 +48,9 @@ printf '== ide-bridge driver: gw=%s ==\n' "$GW"
 # into $RESULTS; it prints the temp root it owns on stdout for cleanup.
 TMP=$(python3 - "$RESULTS" "$GW" <<'PY'
 import json, os, socket, sys, tempfile, threading
-from claude_sandbox import lifecycle, mcp
-from claude_sandbox.config import parse_config
-from claude_sandbox.sandbox import SANDBOX_UID, host_identity
+from agentbox import lifecycle, mcp
+from agentbox.config import parse_config
+from agentbox.sandbox import SANDBOX_UID, host_identity
 
 results_path, gw = sys.argv[1], sys.argv[2]
 checks = {}
@@ -58,7 +58,7 @@ def put(k, ok, detail=""):
     checks[k] = "PASS" if ok else ("FAIL(%s)" % detail if detail else "FAIL")
 
 ident = host_identity()
-tmp = tempfile.mkdtemp(prefix="claude-sandbox-t9.")
+tmp = tempfile.mkdtemp(prefix="box-t9.")
 fakehost = os.path.join(tmp, "fakehost")
 store = os.path.join(tmp, "store")
 

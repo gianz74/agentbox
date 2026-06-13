@@ -5,7 +5,7 @@
     port -- in first-seen order, with ``None`` entries and duplicates dropped.
 """
 
-from claude_sandbox import net
+from agentbox import net
 
 GW = "10.0.2.2"
 _PREAMBLE = [

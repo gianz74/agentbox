@@ -23,7 +23,7 @@ sandboxed ``claude`` to connect back:
 
 The cross-boundary network paths -- the SSE/ws port and any streamable-HTTP MCP
 ports the editor names in ``--mcp-config`` -- are forwarded by
-:mod:`claude_sandbox.net` with one ``pasta -T`` each;
+:mod:`agentbox.net` with one ``pasta -T`` each;
 :func:`loopback_mcp_ports` discovers the latter. Everything else here is the
 staging and lockfile reconciliation around them.
 """
@@ -38,7 +38,7 @@ from urllib.parse import urlparse
 from .sandbox import Bind
 
 #: In-sandbox directory the staged ``--mcp-config`` files are bound read-only at.
-MCP_STAGE_DIR = "/run/claude-sandbox/mcp"
+MCP_STAGE_DIR = "/run/box/mcp"
 
 _MCP_FLAG = "--mcp-config"
 _MCP_FLAG_EQ = "--mcp-config="
