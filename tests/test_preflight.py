@@ -257,3 +257,27 @@ def test_probe_userns_reads_returncode():
 
     assert preflight.probe_userns(run=lambda *a, **k: _Proc(0)) is True
     assert preflight.probe_userns(run=lambda *a, **k: _Proc(1)) is False
+
+
+# --- setup threads the home override into the store build --------------------
+
+
+def test_setup_builds_store_under_the_home_override(monkeypatch, tmp_path):
+    # setup(home=...) must build the store under that home, not the process ~ --
+    # otherwise the store dest diverges from the home the guard and shim resolve
+    # against. (Host preflight and the real install are stubbed out.)
+    seen = {}
+    monkeypatch.setattr(preflight, "preflight", lambda *a, **k: ())
+    monkeypatch.setattr(preflight, "report_preflight", lambda checks: True)
+    monkeypatch.setattr(preflight, "resolve_shim", lambda *a, **k: None)
+    monkeypatch.setattr(preflight, "report_shim", lambda status: None)
+    monkeypatch.setattr(
+        preflight.store, "install_store",
+        lambda agent, *, store, method, version: seen.update(store=store) or store,
+    )
+    monkeypatch.setattr(preflight.store, "installed_version", lambda agent, s: "9.9.9")
+
+    rc = preflight.setup(CLAUDE, config=None, home=str(tmp_path), path="")
+    assert rc == 0
+    assert seen["store"] == preflight.store.store_dir(CLAUDE, home=str(tmp_path))
+    assert str(tmp_path) in str(seen["store"])  # under the override, not real ~
