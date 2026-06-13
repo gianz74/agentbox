@@ -16,6 +16,7 @@ Covers the pure pieces:
 from __future__ import annotations
 
 import os
+import shlex
 
 import pytest
 
@@ -149,6 +150,22 @@ def test_legacy_shim_occupies_the_slot_directly(tmp_path):
 
     text = "\n".join(preflight.shim_guidance(status))
     assert f"ln -sf {entry} {status.slot_path}" in text
+
+
+def test_shim_guidance_quotes_paths_with_spaces(tmp_path):
+    # A $HOME (or wrapper path) with a space must still yield a copy-pasteable
+    # command: both ln operands are shlex-quoted so the shell sees one arg each.
+    home = tmp_path / "John Doe"
+    entry = _exe(home / "venv" / "bin" / "box")
+    empty = home / "empty"
+    empty.mkdir(parents=True)
+
+    status = preflight.resolve_shim(
+        CMD, str(empty), home=str(home), wrapper_entry=entry
+    )
+    text = "\n".join(preflight.shim_guidance(status))
+    assert f"ln -sf {shlex.quote(entry)} {shlex.quote(status.slot_path)}" in text
+    assert f"ln -sf {entry} {status.slot_path}" not in text  # never the bare, broken form
 
 
 def test_report_shim_prints_and_signals(tmp_path, capsys):

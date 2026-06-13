@@ -137,6 +137,19 @@ def test_main_catches_domain_errors(monkeypatch, capsys, exc):
     assert f"box: {exc}" in capsys.readouterr().err
 
 
+def test_main_catches_config_error_on_the_run_path(monkeypatch, capsys):
+    # The shim run path loads the user config lazily inside run.run, so a malformed
+    # config.toml raises ConfigError there (not just at setup). main must surface it
+    # as box: <msg> exit 2 -- a user-input error, the same clean exit as cmd_setup.
+    def boom(*a, **k):
+        raise cli.ConfigError("bad config")
+
+    monkeypatch.setattr(cli.run, "run", boom)
+    monkeypatch.setattr(cli.sys, "argv", ["claude", "-p", "hi"])  # the shim surface
+    assert cli.main() == 2
+    assert "box: bad config" in capsys.readouterr().err
+
+
 # --- leading-block mount parse ------------------------------------------------
 
 def test_mount_then_double_dash_terminator():
