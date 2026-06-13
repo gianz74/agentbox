@@ -87,12 +87,19 @@ class MountSpec:
     backing — "parity"). ``from_`` is the host backing when *aliasing* (e.g.
     ``~/.ssh`` backed by ``~/.ssh-api``). ``exclude`` lists sub-paths (relative to
     ``path``) to mask with an empty read-only overmount.
+
+    ``seed`` declares an agent ``default_mounts`` entry as a *file* (vs the default
+    *directory*) and gives the content written when seeding its missing host source
+    (see ``run.ensure_default_mount_sources``): ``None`` → a directory (``mkdir``);
+    a string → a file holding exactly that text (e.g. ``"{}\n"`` for a JSON config).
+    Only consulted for built-in default mounts; user ``[[mounts]]`` never set it.
     """
 
     path: str  # sandbox-side, ~-expanded
     from_: str | None = None  # host backing when aliasing, ~-expanded
     mode: str = "rw"  # "ro" | "rw"
     exclude: tuple[str, ...] = ()  # sub-paths relative to path
+    seed: str | None = None  # default-mount file seed; None → directory
 
     @property
     def host_path(self) -> str:
