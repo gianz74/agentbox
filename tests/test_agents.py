@@ -145,3 +145,43 @@ def test_prepare_stages_mcp_config_and_collects_ports(tmp_path):
     assert "/run/box/mcp/servers.json" in plan.entry_argv
     # Both the SSE port and the MCP server's loopback port are forwarded, SSE first.
     assert plan.ports == (4321, 7000)
+
+
+def test_prepare_forwards_loopback_base_url_port(tmp_path):
+    plan = ClaudeLaunchHook().prepare(
+        exec_path="/h/.local/bin/claude",
+        agent_args=["-p", "hi"],
+        home="/h",
+        host_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:4000"},
+        hook_stage=str(tmp_path),
+    )
+    # A local Anthropic-compatible gateway's loopback port is forwarded; with no
+    # IDE the exec stays plain.
+    assert plan.ports == (4000,)
+    assert plan.entry_argv == ("/h/.local/bin/claude", "-p", "hi")
+
+
+def test_prepare_does_not_forward_remote_base_url(tmp_path):
+    plan = ClaudeLaunchHook().prepare(
+        exec_path="/h/.local/bin/claude",
+        agent_args=["-p", "hi"],
+        home="/h",
+        host_env={"ANTHROPIC_BASE_URL": "https://api.anthropic.com"},
+        hook_stage=str(tmp_path),
+    )
+    assert plan.ports == ()
+
+
+def test_prepare_orders_sse_then_base_url(tmp_path):
+    plan = ClaudeLaunchHook().prepare(
+        exec_path="/h/.local/bin/claude",
+        agent_args=["-p", "hi"],
+        home="/h",
+        host_env={
+            "CLAUDE_CODE_SSE_PORT": "4321",
+            "ANTHROPIC_BASE_URL": "http://localhost:4000",
+        },
+        hook_stage=str(tmp_path),
+    )
+    # Forwarded order mirrors the tuple build: SSE, then the base-url gateway port.
+    assert plan.ports == (4321, 4000)
