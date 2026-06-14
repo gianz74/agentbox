@@ -163,6 +163,27 @@ def test_loopback_ports_none_without_mcp_config():
     assert claude.loopback_mcp_ports(["--print", "hi"]) == []
 
 
+# --- base_url_port ------------------------------------------------------------
+
+def test_base_url_port_reads_loopback_spellings():
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://127.0.0.1:4000"}) == 4000
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://localhost:4000/v1"}) == 4000
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://[::1]:4000"}) == 4000
+
+
+def test_base_url_port_scheme_default_when_absent():
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://localhost/v1"}) == 80
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "https://127.0.0.1/v1"}) == 443
+
+
+def test_base_url_port_none_for_remote_or_unset():
+    # The default hosted endpoint and any non-loopback host are never forwarded.
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "https://api.anthropic.com"}) is None
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://192.168.1.10:4000"}) is None
+    assert claude.base_url_port({}) is None
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "not a url"}) is None
+
+
 # --- lockfile reconciliation --------------------------------------------------
 
 def test_lockfile_path():

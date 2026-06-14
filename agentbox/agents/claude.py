@@ -25,11 +25,12 @@ module (formerly ``agentbox.mcp`` plus the SSE bits of ``agentbox.net``):
   that ``claude``'s exact ``getcwd()`` compare never has), and only then execs
   ``claude``. The sentinel dies with the ephemeral sandbox.
 
-The cross-boundary network paths -- the SSE/ws port and any streamable-HTTP MCP
-ports the editor names in ``--mcp-config`` -- are returned by the hook as the
-ports pasta must forward (one ``pasta -T`` each); :func:`loopback_mcp_ports`
-discovers the latter. Everything else here is the staging and lockfile
-reconciliation around them.
+The cross-boundary network paths -- the SSE/ws port, any streamable-HTTP MCP
+ports the editor names in ``--mcp-config``, and a host-loopback
+``ANTHROPIC_BASE_URL`` (a local Anthropic-compatible gateway) -- are returned by
+the hook as the ports pasta must forward (one ``pasta -T`` each);
+:func:`loopback_mcp_ports` and :func:`base_url_port` discover the latter two.
+Everything else here is the staging and lockfile reconciliation around them.
 """
 
 from __future__ import annotations
@@ -46,6 +47,11 @@ from .base import Agent, InstallRecipe, LaunchHook, LaunchPlan
 
 #: The IDE sets this when it spawns ``claude`` with a local MCP/SSE server.
 SSE_PORT_ENV = "CLAUDE_CODE_SSE_PORT"
+
+#: The Anthropic API base claude talks to. When it names a host-loopback address
+#: (a local Anthropic-compatible gateway/proxy), its port is forwarded into the
+#: sandbox so the agent can reach it; a remote base URL is left to outbound NAT.
+BASE_URL_ENV = "ANTHROPIC_BASE_URL"
 
 #: In-sandbox directory the staged ``--mcp-config`` files are bound read-only at.
 MCP_STAGE_DIR = "/run/box/mcp"
@@ -236,6 +242,22 @@ def loopback_mcp_ports(claude_args) -> list[int]:
     return ports
 
 
+# --- ANTHROPIC_BASE_URL loopback port ----------------------------------------
+
+
+def base_url_port(env=None) -> int | None:
+    """The host-loopback port named by ``ANTHROPIC_BASE_URL``, or ``None``.
+
+    Forwarding it lets a sandboxed ``claude`` reach a local Anthropic-compatible
+    gateway (e.g. a proxy on ``127.0.0.1`` fronting a local model) -- the same
+    loopback trust boundary as the SSE/MCP ports. A non-loopback base URL (the
+    default ``api.anthropic.com``, or any remote) yields ``None`` and is reached
+    over normal outbound NAT, never a ``-T`` forward.
+    """
+    env = os.environ if env is None else env
+    return _loopback_port(env.get(BASE_URL_ENV))
+
+
 # --- IDE lockfile reconciliation ---------------------------------------------
 
 
@@ -347,9 +369,10 @@ class ClaudeLaunchHook(LaunchHook):
 
     :meth:`prepare` stages any ``--mcp-config`` files into *hook_stage*, wraps the
     exec in the lockfile-reconciling bootstrap when the editor exported an SSE
-    port, and reports every host-loopback port pasta must forward (the SSE/ws port
-    plus any streamable-HTTP MCP server ports the ``--mcp-config`` operands name).
-    A non-IDE launch returns the plain command with no extra binds or ports.
+    port, and reports every host-loopback port pasta must forward (the SSE/ws port,
+    any streamable-HTTP MCP server ports the ``--mcp-config`` operands name, and a
+    loopback ``ANTHROPIC_BASE_URL`` port). A non-IDE launch with no local gateway
+    returns the plain command with no extra binds or ports.
     """
 
     def prepare(
@@ -365,7 +388,9 @@ class ClaudeLaunchHook(LaunchHook):
         staged_args, binds = stage_mcp_configs(agent_args, hook_stage)
         entry = entry_argv(exec_path, staged_args, home=home, sse_port=sse_port)
         ports = tuple(
-            p for p in (sse_port, *loopback_mcp_ports(agent_args)) if p is not None
+            p
+            for p in (sse_port, base_url_port(host_env), *loopback_mcp_ports(agent_args))
+            if p is not None
         )
         return LaunchPlan(entry_argv=entry, binds=binds, ports=ports)
 
