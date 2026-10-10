@@ -29,7 +29,9 @@ The cross-boundary network paths -- the SSE/ws port, any streamable-HTTP MCP
 ports the editor names in ``--mcp-config``, and a host-loopback
 ``ANTHROPIC_BASE_URL`` (a local Anthropic-compatible gateway) -- are returned by
 the hook as the ports pasta must forward (one ``pasta -T`` each);
-:func:`loopback_mcp_ports` and :func:`base_url_port` discover the latter two.
+:func:`loopback_mcp_ports` and :func:`base_url_port` discover the latter two,
+and :func:`configured_mcp_ports` finds loopback MCP servers the user registered
+in claude's global config.
 Everything else here is the staging and lockfile reconciliation around them.
 """
 
@@ -52,6 +54,10 @@ SSE_PORT_ENV = "CLAUDE_CODE_SSE_PORT"
 #: (a local Anthropic-compatible gateway/proxy), its port is forwarded into the
 #: sandbox so the agent can reach it; a remote base URL is left to outbound NAT.
 BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+
+#: Overrides the directory holding claude's global ``.claude.json`` (default:
+#: ``$HOME``); honoured when discovering the MCP servers the user configured.
+CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
 
 #: In-sandbox directory the staged ``--mcp-config`` files are bound read-only at.
 MCP_STAGE_DIR = "/run/box/mcp"
@@ -177,13 +183,16 @@ def _config_json_text(value: str) -> str | None:
     its own error for that)."""
     if _is_inline_json(value):
         return value
-    if os.path.isfile(value):
-        try:
-            with open(value) as fh:
-                return fh.read()
-        except OSError:
-            return None
-    return None
+    return _read_text(value) if os.path.isfile(value) else None
+
+
+def _read_text(path: str) -> str | None:
+    """*path*'s contents, or ``None`` when it can't be read or decoded."""
+    try:
+        with open(path) as fh:
+            return fh.read()
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _loopback_port(url) -> int | None:
@@ -219,27 +228,89 @@ def loopback_mcp_ports(claude_args) -> list[int]:
     config, and forwarding a non-loopback port would breach host-localhost
     isolation.
     """
-    ports: list[int] = []
-    seen: set[int] = set()
-    for value in _mcp_config_values(claude_args):
-        text = _config_json_text(value)
-        if text is None:
-            continue
-        try:
-            data = json.loads(text)
-        except ValueError:
-            continue
-        servers = data.get("mcpServers") if isinstance(data, dict) else None
-        if not isinstance(servers, dict):
-            continue
-        for server in servers.values():
-            if not isinstance(server, dict):
-                continue
-            port = _loopback_port(server.get("url"))
-            if port is not None and port not in seen:
-                seen.add(port)
-                ports.append(port)
-    return ports
+    objects = (_json_object(_config_json_text(v)) for v in _mcp_config_values(claude_args))
+    return _mcp_ports(obj.get("mcpServers") for obj in objects if obj is not None)
+
+
+def _json_object(text: str | None) -> dict | None:
+    """*text* parsed as a JSON object, else ``None`` (absent, malformed, non-object)."""
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _mcp_ports(server_maps) -> list[int]:
+    """The deduped loopback ports across ``mcpServers`` objects, first-seen order."""
+    ports = (
+        _loopback_port(server.get("url"))
+        for servers in server_maps if isinstance(servers, dict)
+        for server in servers.values() if isinstance(server, dict)
+    )
+    return list(dict.fromkeys(p for p in ports if p is not None))
+
+
+# --- claude global-config loopback-port discovery ----------------------------
+
+# Servers the user registered in claude's own config file. Only that
+# user-authored file is read: a repo's ``.mcp.json`` is untrusted, and a forward
+# opens the port to everything in the sandbox, not only to claude.
+
+
+def _global_config_path(home: str, env) -> str:
+    """claude's global config: ``$CLAUDE_CONFIG_DIR/.claude.json``, else ``<home>/.claude.json``."""
+    base = env.get(CONFIG_DIR_ENV) or home
+    return os.path.join(base, ".claude.json")
+
+
+def _git_root(cwd: str) -> str | None:
+    """The nearest ancestor-or-self of *cwd* holding a ``.git`` entry, else ``None``.
+
+    ``.git`` is a file in worktrees and submodules, hence ``exists``, not ``isdir``.
+    """
+    path = cwd
+    while True:
+        if os.path.exists(os.path.join(path, ".git")):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
+def _config_server_maps(config: dict, cwd: str):
+    """Yield the ``mcpServers`` objects of *config* that apply in *cwd*: top-level,
+    then ``projects[<cwd>]``, then ``projects[<git root of cwd>]``."""
+    yield config.get("mcpServers")
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        return
+    for key in (cwd, _git_root(cwd)):
+        project = projects.get(key)
+        if isinstance(project, dict):
+            yield project.get("mcpServers")
+
+
+def configured_mcp_ports(home: str, cwd: str, env) -> list[int]:
+    """The deduped host-loopback MCP ports in claude's global config.
+
+    The config is ``$CLAUDE_CONFIG_DIR/.claude.json`` when that is set in *env*,
+    else ``<home>/.claude.json``. Ports are collected in first-seen order from
+    its top-level ``mcpServers``, then ``projects[<cwd>].mcpServers``, then
+    ``projects[<git root of cwd>].mcpServers``; *cwd* must be normalized, as it
+    is matched verbatim against the ``projects`` keys. No other ancestor of
+    *cwd* is consulted (a server registered for a parent directory does not
+    apply in its subdirectories), and ``<cwd>/.mcp.json`` is never read. A
+    missing, unreadable or malformed config, or any entry of the wrong shape,
+    contributes no ports, silently -- claude reports its own config errors.
+    """
+    config = _json_object(_read_text(_global_config_path(home, env)))
+    if config is None:
+        return []
+    return _mcp_ports(_config_server_maps(config, cwd))
 
 
 # --- ANTHROPIC_BASE_URL loopback port ----------------------------------------

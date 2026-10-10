@@ -5,6 +5,9 @@ in-sandbox bootstrap). Relocated from ``test_mcp`` when the plumbing moved into
   * ``--mcp-config`` staging: a real file is copied and its operand rewritten to
     the in-sandbox staged path with a single read-only bind; inline JSON and
     missing paths pass through; both the spaced and ``=`` operand forms work,
+  * ``configured_mcp_ports``: loopback MCP ports from claude's global config
+    (top level, ``projects[cwd]``, ``projects[git root]``; no ancestor walk, no
+    ``.mcp.json``; ``CLAUDE_CONFIG_DIR``; malformed input yields nothing),
   * lockfile reconciliation: pid rewrite + ``workspaceFolders`` trailing-slash
     normalization, and the ``changed`` flag,
   * ``entry_argv``: plain ``claude`` without an SSE port, the bootstrap wrapper
@@ -156,6 +159,12 @@ def test_loopback_ports_skips_malformed_and_missing():
     ]) == []
 
 
+def test_loopback_ports_skips_undecodable_file(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_bytes(b"\xff\xfe{}")
+    assert claude.loopback_mcp_ports(["--mcp-config", str(bad)]) == []
+
+
 def test_loopback_ports_none_without_mcp_config():
     assert claude.loopback_mcp_ports(["--print", "hi"]) == []
 
@@ -179,6 +188,134 @@ def test_base_url_port_none_for_remote_or_unset():
     assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://192.168.1.10:4000"}) is None
     assert claude.base_url_port({}) is None
     assert claude.base_url_port({"ANTHROPIC_BASE_URL": "not a url"}) is None
+
+
+# --- configured_mcp_ports -----------------------------------------------------
+
+def _write_config(directory, data):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / ".claude.json").write_text(json.dumps(data))
+
+
+def _servers(*urls):
+    return {"mcpServers": {f"s{i}": {"url": u} for i, u in enumerate(urls)}}
+
+
+def test_configured_mcp_ports_top_level_servers(tmp_path):
+    home, cwd = tmp_path / "home", tmp_path / "work"
+    cwd.mkdir()
+    _write_config(home, {"mcpServers": {"ghidrassist": {
+        "type": "http", "url": "http://localhost:8080/mcp"}}})
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [8080]
+
+
+def test_configured_mcp_ports_project_entry_for_cwd(tmp_path):
+    home, cwd = tmp_path / "home", tmp_path / "work"
+    cwd.mkdir()
+    _write_config(home, {
+        **_servers("http://localhost:8080/mcp"),
+        "projects": {str(cwd): _servers("http://127.0.0.1:9000/mcp")},
+    })
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [8080, 9000]
+
+
+def test_configured_mcp_ports_project_entry_for_git_root_from_subdir(tmp_path):
+    home = tmp_path / "home"
+    for name, make_git in (("repo", lambda g: g.mkdir()),
+                           ("worktree", lambda g: g.write_text("gitdir: /x\n"))):
+        repo = tmp_path / name
+        sub = repo / "sub" / "dir"
+        sub.mkdir(parents=True)
+        make_git(repo / ".git")
+        _write_config(home, {"projects": {str(repo): _servers("http://localhost:7000/")}})
+        assert claude.configured_mcp_ports(str(home), str(sub), {}) == [7000], name
+
+
+def test_configured_mcp_ports_no_ancestor_walk(tmp_path):
+    home, parent = tmp_path / "home", tmp_path / "devel"
+    repo = parent / "repo"
+    sub = repo / "sub"
+    sub.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    # A parent above the git root does not apply ...
+    _write_config(home, {"projects": {str(parent): _servers("http://localhost:7001/")}})
+    assert claude.configured_mcp_ports(str(home), str(sub), {}) == []
+    # ... nor does any parent of a cwd outside a repo.
+    plain = tmp_path / "plain" / "child"
+    plain.mkdir(parents=True)
+    _write_config(home, {"projects": {str(plain.parent): _servers("http://localhost:7003/")}})
+    assert claude.configured_mcp_ports(str(home), str(plain), {}) == []
+
+
+def test_configured_mcp_ports_claude_config_dir_override(tmp_path):
+    home, alt, cwd = tmp_path / "home", tmp_path / "alt", tmp_path / "work"
+    cwd.mkdir()
+    _write_config(home, _servers("http://localhost:1111/"))
+    _write_config(alt, _servers("http://localhost:2222/"))
+    env = {"CLAUDE_CONFIG_DIR": str(alt)}
+    assert claude.configured_mcp_ports(str(home), str(cwd), env) == [2222]
+    assert claude.configured_mcp_ports(str(home), str(cwd), {"CLAUDE_CONFIG_DIR": ""}) == [1111]
+
+
+def test_configured_mcp_ports_dedupes_first_seen_order(tmp_path):
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    cwd = repo / "sub"
+    cwd.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    _write_config(home, {
+        **_servers("http://localhost:8080/", "http://localhost:3000/"),
+        "projects": {
+            str(cwd): _servers("http://localhost:4000/", "http://localhost:8080/"),
+            str(repo): _servers("http://localhost:3000/", "http://localhost:5000/"),
+        },
+    })
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [8080, 3000, 4000, 5000]
+
+
+def test_configured_mcp_ports_skips_non_loopback(tmp_path):
+    home, cwd = tmp_path / "home", tmp_path / "work"
+    cwd.mkdir()
+    _write_config(home, _servers(
+        "http://192.168.1.10:8080/mcp",
+        "https://mcp.example.com/mcp",
+        "http://[::1]:6000/mcp",
+        "https://localhost/mcp",
+    ))
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [6000, 443]
+
+
+def test_configured_mcp_ports_missing_or_malformed_config_is_empty(tmp_path):
+    home, cwd = tmp_path / "home", tmp_path / "work"
+    cwd.mkdir()
+    home.mkdir()
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == []
+    cfg = home / ".claude.json"
+    for text in ("{not json", "[]", "3"):
+        cfg.write_text(text)
+        assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [], text
+    cfg.write_bytes(b"\xff\xfe{")
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == []
+    cfg.unlink()
+    cfg.mkdir()
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == []
+    cfg.rmdir()
+    for data in (
+        {"mcpServers": "x"},
+        {"projects": []},
+        {"projects": {str(cwd): 3}},
+        {"projects": {str(cwd): {"mcpServers": ["x"]}}},
+        {"mcpServers": {"a": "http://localhost:1/", "b": {"type": "stdio", "command": "foo"}}},
+    ):
+        _write_config(home, data)
+        assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [], data
+
+
+def test_configured_mcp_ports_does_not_read_dot_mcp_json(tmp_path):
+    home, cwd = tmp_path / "home", tmp_path / "work"
+    cwd.mkdir()
+    _write_config(home, {"projects": {str(cwd): {"mcpServers": {}}}})
+    (cwd / ".mcp.json").write_text(json.dumps(_servers("http://localhost:8080/mcp")))
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == []
 
 
 # --- lockfile reconciliation --------------------------------------------------
