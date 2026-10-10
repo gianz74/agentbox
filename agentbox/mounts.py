@@ -44,8 +44,8 @@ from .sandbox import Bind
 # The fallback context name for a cwd that matches no configured context.
 DEFAULT_CONTEXT = "default"
 
-# Host locations a session must never use as its working directory. ``/`` and
-# ``$HOME`` are matched exactly (handled inline); the roots below are matched
+# Host locations a session must never use as its working directory. ``/``, ``$HOME``
+# and the ancestors of ``$HOME`` are handled inline; the roots below are matched
 # at-or-under -- nothing should run with one of these as its workspace.
 _SYSTEM_ROOTS = (
     "/etc",
@@ -180,7 +180,8 @@ def guard_store_shadow(config: Config, agent, *, home: str | None = None) -> Non
 
 def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, agent, home: str) -> None:
     """Refuse an unsafe working directory: an aliased credential store, ``$HOME``
-    itself, the filesystem root, a system root, or part of the agent's store."""
+    itself or any ancestor of it, the filesystem root, a system root, or part of
+    the agent's store."""
     # An aliased mount remaps a credential store onto a different host backing;
     # neither its target nor its source may double as a workspace.
     for m in mounts:
@@ -192,13 +193,16 @@ def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, agent, home: str) -> 
                 f"{m.path!r}; never use a remapped credential store as a workspace"
             )
 
-    if cwd == home:
-        raise MountError(
-            f"refusing to run in {cwd!r}: it is $HOME itself -- run in a project "
-            "directory beneath it"
-        )
     if cwd == "/":
         raise MountError("refusing to run in '/': the filesystem root is off limits")
+    # $HOME or an ancestor of it (e.g. ``/home``): its read-write parity bind would
+    # overmount the sandbox's writable home skeleton, leaving the frozen store's
+    # binary with nowhere to bind and aborting the launch.
+    if _within(home, cwd):
+        raise MountError(
+            f"refusing to run in {cwd!r}: it is $HOME or an ancestor of it -- run "
+            "in a project directory beneath $HOME"
+        )
     for root in _SYSTEM_ROOTS:
         if _within(cwd, root):
             raise MountError(
@@ -207,11 +211,12 @@ def _guard_cwd(cwd: str, mounts: tuple[MountSpec, ...], *, agent, home: str) -> 
 
     # The store's payload tree -- and the intermediate directories under $HOME that
     # lead to it -- are off limits as a workspace: the read-only store binds there.
-    # A lone-binary agent (no payload tree) has no such subtree to protect.
+    # (Ancestors of $HOME were refused above.) A lone-binary agent (no payload
+    # tree) has no such subtree to protect.
     payload_rel = agent.install.payload_rel
     if payload_rel is not None:
         payload = _norm(os.path.join(home, *payload_rel))
-        if _within(cwd, payload) or (_within(payload, cwd) and _within(cwd, home)):
+        if _within(cwd, payload) or _within(payload, cwd):
             raise MountError(
                 f"refusing to run in {cwd!r}: it is part of the sandbox's "
                 f"{agent.command} store"

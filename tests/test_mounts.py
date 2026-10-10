@@ -261,9 +261,12 @@ def test_cwd_under_alias_source_refused():
         resolve(cfg, CLAUDE, _h(".ssh-api", "keys"), home=HOME)
 
 
-def test_home_itself_refused():
-    with pytest.raises(MountError, match=r"\$HOME"):
-        resolve(parse_config({}), CLAUDE, HOME, home=HOME)
+@pytest.mark.parametrize("cwd", ["/home/users/alice", "/home", "/home/users"])
+def test_home_and_its_ancestors_refused(cwd):
+    # $HOME or an ancestor would parity-bind over the sandbox's writable home
+    # skeleton, leaving the store binary nowhere to land.
+    with pytest.raises(MountError, match=r"\$HOME or an ancestor"):
+        resolve(parse_config({}), CLAUDE, cwd, home="/home/users/alice")
 
 
 def test_filesystem_root_refused():
