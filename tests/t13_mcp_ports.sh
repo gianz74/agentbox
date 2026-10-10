@@ -7,14 +7,22 @@
 # host-localhost leak).
 #
 # This drives the package hot path (run.run) through real pasta+bwrap with
-# three host-loopback servers up and checks, from inside the sandbox:
+# five host-loopback servers up and checks, from inside the sandbox:
 #   - the SSE/ws port round-trips (>=3 events) through its pasta `-T`,
 #   - the `emacs-tools` HTTP URL (a loopback port the editor named) answers 200,
 #   - a server whose `--mcp-config` URL is non-loopback is NOT forwarded: its
 #     host-loopback port, live on the host, stays unreachable inside.
-# The pure logic (port extraction across inline JSON / file operands /
+#   - a loopback MCP server named only in claude's global config
+#     (<home>/.claude.json `mcpServers`), with no `--mcp-config`, is forwarded --
+#     and is the only port forwarded -- and answers inside,
+#   - a launch forwarding no ports leaves a live host-loopback port unreachable:
+#     pasta gets `-T none -U none`, not its default `auto` (every loopback port).
+# The two extra launches each use a fake home, so the real ~/.claude.json is
+# never read. The pure logic (port extraction across inline JSON / file operands /
 # localhost|127.0.0.1|::1 / scheme-default ports / malformed+non-loopback skips,
-# and wrap_argv's one-deduped-`-T`-per-port) is covered first by the unit suite.
+# configured_mcp_ports over the global config's top-level and per-project
+# `mcpServers`, and wrap_argv's one-deduped-`-T`-per-port, `-T none` when there
+# are none, and `-U none` always) is covered first by the unit suite.
 # The store is built offline (copy path) so only the deliberate forwards touch the
 # loopback; the hot path is pasta-fronted, so this needs a default route.
 # Exits 0 only if every check passes.
@@ -34,7 +42,7 @@ done
 GW=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'via \K[0-9.]+' | head -1)
 [ -n "$GW" ] || fatal "no default gateway found (the hot path is pasta-fronted)"
 
-echo "== unit suite: --mcp-config port extractor + wrap_argv multi-port =="
+echo "== unit suite: MCP port discovery (--mcp-config + global config) + wrap_argv lockdown =="
 python3 -m pytest -q "$REPO/tests/test_claude.py" "$REPO/tests/test_net.py" \
   || fatal "MCP/net unit suite failed"
 
@@ -74,9 +82,10 @@ store = os.path.join(tmp, "store")
 # straight back out of its own argv.
 PROBE = r'''#!/bin/sh
 OUT="$(pwd)/claude_out"
-mcp=""; prev=""
+mcp=""; probes=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--mcp-config" ] && mcp="$a"
+  [ "$prev" = "--probe" ] && probes="$probes $a"
   case "$a" in --mcp-config=*) mcp="${a#--mcp-config=}";; esac
   prev="$a"
 done
@@ -87,16 +96,22 @@ port_of() { printf '%s' "$1" | python3 -c 'import sys;from urllib.parse import u
     ev=$(curl -sN --max-time 8 "http://127.0.0.1:$CLAUDE_CODE_SSE_PORT/" 2>/dev/null | grep -c "^data:")
     echo "SSE_EVENTS=${ev:-0}"
   fi
-  good=$(url emacs-tools)
-  echo "HTTP_URL=${good:-<none>}"
-  echo "HTTP_CODE=$(curl -s --max-time 8 -o /dev/null -w '%{http_code}' "$good" 2>/dev/null)"
-  bad=$(url blocked)
-  bport=$(port_of "$bad")
-  echo "BLK_PORT=${bport:-<none>}"
-  if [ -n "$bport" ]; then
-    echo "BLK_CODE=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$bport/" 2>/dev/null)"
-    echo "BLK_RC=$?"
+  if [ -n "$mcp" ]; then
+    good=$(url emacs-tools)
+    echo "HTTP_URL=${good:-<none>}"
+    echo "HTTP_CODE=$(curl -s --max-time 8 -o /dev/null -w '%{http_code}' "$good" 2>/dev/null)"
+    bad=$(url blocked)
+    bport=$(port_of "$bad")
+    echo "BLK_PORT=${bport:-<none>}"
+    if [ -n "$bport" ]; then
+      echo "BLK_CODE=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$bport/" 2>/dev/null)"
+      echo "BLK_RC=$?"
+    fi
   fi
+  # `--probe name=url`: a plain reachability probe, refused -> 000.
+  for p in $probes; do
+    echo "PROBE_${p%%=*}=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "${p#*=}" 2>/dev/null)"
+  done
 } > "$OUT"
 echo "STORE-9.9.9"
 exit 0
@@ -156,6 +171,27 @@ HTTP_SRC = (
     "S(('::',P),H).serve_forever()\n"
 )
 
+# Record the ports each launch hands to pasta, so a check can tell an empty
+# forward list (`-T none`) from a narrowed one.
+sent_ports = []
+_real_sandbox_run = rmod.sandbox.run
+def _recording_run(spec, ports, gateway):
+    sent_ports.append(list(ports))
+    return _real_sandbox_run(spec, ports=ports, gateway=gateway)
+rmod.sandbox.run = _recording_run
+
+def launch(name, home_json, argv):
+    """A hermetic launch: its own fake home (so the real ~/.claude.json is not
+    read) and an env naming no SSE/base-URL/config-dir port."""
+    home = os.path.join(tmp, "home-" + name); os.makedirs(home)
+    with open(os.path.join(home, ".claude.json"), "w") as f:
+        json.dump(home_json, f)
+    proj = os.path.join(tmp, "proj-" + name); os.makedirs(proj)
+    del sent_ports[:]
+    rc = rmod.run(AG, [], argv + ["--print"], config=parse_config({}), cwd=proj,
+                  home=home, env={"TERM": "xterm-t13"}, store=store, gateway=gw)
+    return rc, (sent_ports[0] if sent_ports else None), kv(os.path.join(proj, "claude_out"))
+
 sse_port, http_port, blk_port = free_port(), free_port(), free_port()
 procs = []
 def spawn(src, port):
@@ -210,6 +246,33 @@ try:
     put("blocked_not_forwarded",
         I.get("BLK_CODE") in ("000", "", None),
         "code=%s rc=%s" % (I.get("BLK_CODE"), I.get("BLK_RC")))
+
+    # (i) A loopback MCP server named only in the global config, no --mcp-config:
+    # it is forwarded (and nothing else is) and answers inside.
+    cfg_port, lock_port = free_port(), free_port()
+    spawn(HTTP_SRC, cfg_port); spawn(HTTP_SRC, lock_port)
+    for p in (cfg_port, lock_port):
+        if not wait_accept(p):
+            raise SystemExit("host server on %d never came up" % p)
+    rc, ports, I = launch(
+        "cfg",
+        {"mcpServers": {"ghidra-like": {"type": "http",
+                                        "url": "http://localhost:%d/mcp" % cfg_port}}},
+        ["--probe", "cfg=http://localhost:%d/mcp" % cfg_port])
+    put("cfg_run_rc", rc == 0, "rc=%s" % rc)
+    put("cfg_port_forwarded", ports == [cfg_port], "ports=%s want=[%d]" % (ports, cfg_port))
+    put("cfg_mcp_reachable", I.get("PROBE_cfg") == "200", "code=%s" % I.get("PROBE_cfg"))
+
+    # (ii) Lockdown: a launch forwarding nothing gets `-T none`, not pasta's default
+    # `auto`, so a live host-loopback port named nowhere is unreachable inside.
+    rc, ports, I = launch(
+        "none", {}, ["--probe", "lock=http://127.0.0.1:%d/" % lock_port])
+    put("lockdown_run_rc", rc == 0, "rc=%s" % rc)
+    put("lockdown_no_ports", ports == [], "ports=%s" % ports)
+    put("lockdown_live_on_host", host_status(lock_port) == 200,
+        "status=%s" % host_status(lock_port))
+    put("lockdown_unreachable", I.get("PROBE_lock") in ("000", "", None),
+        "code=%s" % I.get("PROBE_lock"))
 finally:
     for p in procs:
         p.terminate()
@@ -241,10 +304,13 @@ cat <<'MANUAL'
   with no ConnectionRefused in ~/.cache/claude-cli-nodejs/<cwd>/mcp-logs-*. The
   automated checks above stand in for the bridge mechanics; this confirms the full
   editor handshake end to end.
+  On the real host, run the plain launcher (`claude-local-box`, no extra flags):
+  `/mcp` must show the user-scope `ghidrassist` server (http://localhost:8080/mcp
+  in ~/.claude.json) as connected.
 MANUAL
 
 if [ "$fail" -eq 0 ]; then
-  echo "MCP-PORTS: PASS -- SSE + emacs-tools HTTP both bridged; non-loopback URL not forwarded."
+  echo "MCP-PORTS: PASS -- SSE + emacs-tools HTTP + global-config MCP bridged; non-loopback URL and unconfigured loopback port unreachable."
   exit 0
 else
   echo "MCP-PORTS: FAIL -- see checks above."; exit 1
