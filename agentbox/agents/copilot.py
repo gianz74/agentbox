@@ -9,21 +9,16 @@ scratch install, not assumed:
   ``{store}/.local/bin/copilot``. The release tarball is a *lone binary* (no
   versioned payload tree), so :attr:`InstallRecipe.payload_rel` is ``None``.
 
-* **Version pin -- deferred in v1.** The installer takes a version via the
-  ``VERSION`` *environment variable*, not argv, so the recipe's argv-based
-  ``version_args`` cannot express it; and the lone binary carries no readable
-  version label in the store layout. Pinning is therefore unsupported for now
-  (``version_args=None``). A pin the installer cannot honor would make the
-  store-freshness check never converge (rebuilding on every launch), so config
-  parsing rejects ``[agents.copilot].version`` outright -- keyed on
-  ``version_args is None`` (see ``config._parse_agents``).
+* **Version pin -- unsupported** (``version_args=None``, see
+  :attr:`InstallRecipe.version_args`): the installer takes a version via the
+  ``VERSION`` env var, not argv, and the lone binary reports no version anyway.
 
 * **Self-update freeze.** copilot's auto-update is gated by the
   ``COPILOT_AUTO_UPDATE`` runtime env (it updates *unless* the value is
   ``"false"``), loading a newer JS ``pkg`` from ``~/.copilot/pkg`` -- a writable
   default mount -- so a read-only store binary alone would not freeze it. The
-  freeze is injected via :attr:`runtime_env`; :meth:`disable_self_update` is a
-  no-op (there is nothing to write into the store).
+  freeze is injected via :attr:`runtime_env`; nothing is written into the store
+  (the inherited no-op :meth:`disable_self_update`).
 
 * **Auth/config.** Everything copilot persists lives under ``~/.copilot``
   (``COPILOT_HOME``): ``config.json``, ``mcp-config.json``, the credential it
@@ -42,8 +37,6 @@ default ``None``); it launches as the plain ``(exec_path, *args)``.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ..config import MountSpec
 from .base import Agent, InstallRecipe
 
@@ -59,7 +52,7 @@ class CopilotAgent(Agent):
         redirect_value="{store}/.local",
         binary_rel=(".local", "bin", "copilot"),
         payload_rel=None,
-        version_args=None,  # version is a VERSION env var, not argv -- deferred (see module docstring)
+        version_args=None,  # pin unsupported (see module docstring)
     )
     env_prefixes = ()
     # The three token vars copilot accepts for non-interactive auth (per its own
@@ -68,12 +61,3 @@ class CopilotAgent(Agent):
     env_names = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
     default_mounts = (MountSpec(path="~/.copilot"),)
     runtime_env = (("COPILOT_AUTO_UPDATE", "false"),)
-
-    def disable_self_update(self, store: Path) -> None:
-        """No-op: copilot has no store-side freeze.
-
-        Its auto-update is gated by the ``COPILOT_AUTO_UPDATE`` runtime env
-        (injected via :attr:`runtime_env`), not a file in the store, and the store
-        binary is bound read-only at runtime regardless -- there is nothing to
-        write into the store at install time.
-        """

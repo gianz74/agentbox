@@ -174,13 +174,13 @@ def test_unknown_agent_name_rejected(tmp_path):
         load_config(_write(tmp_path, text))
 
 
-def test_version_pin_rejected_for_agent_that_cannot_honor_it(tmp_path):
-    # copilot's installer cannot select a version (version_args is None), so a pin
-    # would never converge -> the run path would rebuild every launch. Reject it at
-    # parse time rather than loop.
-    text = '[agents.copilot]\nversion = "0.3.1"\n'
+@pytest.mark.parametrize("name", ["copilot", "opencode"])
+def test_version_pin_rejected_for_agent_that_cannot_honor_it(tmp_path, name):
+    # version_args is None, so a pin would never converge -> the run path would
+    # rebuild every launch. Reject it at parse time rather than loop.
+    text = f'[agents.{name}]\nversion = "1.0"\n'
     with pytest.raises(
-        ConfigError, match=r"\[agents\.copilot\]\.version: 'copilot' does not support"
+        ConfigError, match=rf"\[agents\.{name}\]\.version: '{name}' does not support"
     ):
         load_config(_write(tmp_path, text))
 

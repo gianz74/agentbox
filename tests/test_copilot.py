@@ -9,7 +9,6 @@ Locks in the facts verified against the real installer + a scratch install:
   * its env surface forwards ``GITHUB_TOKEN`` (not the ``COPILOT_*`` prefix),
   * ``~/.copilot`` is its single directory default mount,
   * the self-update freeze is the ``COPILOT_AUTO_UPDATE=false`` runtime-env knob,
-    and ``disable_self_update`` writes nothing into the store,
   * it carries no launch hook.
 """
 
@@ -64,13 +63,6 @@ def test_copilot_default_mounts_are_one_directory():
 
 def test_copilot_runtime_env_freezes_self_update():
     assert CopilotAgent.runtime_env == (("COPILOT_AUTO_UPDATE", "false"),)
-
-
-# --- self-update freeze is a no-op write --------------------------------------
-
-def test_disable_self_update_writes_nothing_to_the_store(tmp_path):
-    AGENTS["copilot"].disable_self_update(tmp_path)
-    assert list(tmp_path.iterdir()) == []  # nothing written into the store
 
 
 # --- no launch hook -----------------------------------------------------------

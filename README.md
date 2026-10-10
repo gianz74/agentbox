@@ -16,13 +16,13 @@ is carried by a built-in **agent**, selected by the invoked name (`argv[0]`).
 
 ## Agents
 
-| | claude | copilot |
-|---|---|---|
-| CLI | Anthropic Claude Code | GitHub Copilot CLI |
-| Installer | `claude.ai/install.sh` | `gh.io/copilot-install` |
-| Auth/config mount | `~/.claude`, `~/.claude.json` | `~/.copilot` |
-| Auth env | `ANTHROPIC_*`, `CLAUDE_*` | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` |
-| Editor/IDE bridge | MCP/SSE + lockfile reconciliation | — (none yet) |
+| | claude | copilot | opencode |
+|---|---|---|---|
+| CLI | Anthropic Claude Code | GitHub Copilot CLI | opencode |
+| Installer | `claude.ai/install.sh` | `gh.io/copilot-install` | `opencode.ai/install` |
+| Auth/config mount | `~/.claude`, `~/.claude.json` | `~/.copilot` | `~/.config/opencode`, `~/.local/share/opencode`, `~/.local/state/opencode` |
+| Auth env | `ANTHROPIC_*`, `CLAUDE_*` | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` | — (`opencode auth login`; forward provider keys via `[env]`) |
+| Editor/IDE bridge | MCP/SSE + lockfile reconciliation | — (none yet) | — (none yet) |
 
 Each agent's auth/config directories are mounted automatically — you do **not**
 list them under `[[mounts]]`.
@@ -117,6 +117,10 @@ version = "2.1.150"        # optional; unset = latest at setup time
 > Do **not** pin `[agents.copilot].version`: copilot's installer takes a version
 > via an env var the recipe can't express, so a pin would never converge and would
 > rebuild the store on every launch. See `agentbox/agents/copilot.py`.
+>
+> The same applies to `[agents.opencode].version`: opencode's installer *can* pin,
+> but its lone binary exposes no version label for the freshness check to verify,
+> so a pin would likewise rebuild every launch. See `agentbox/agents/opencode.py`.
 
 The shipped default file documents every table inline; read it after the first
 run.

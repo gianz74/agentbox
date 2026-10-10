@@ -322,10 +322,9 @@ def _parse_agents(raw: object) -> dict[str, AgentConfig]:
         _reject_unknown_keys(body, _AGENT_KEYS, where)
         version = _opt_str(body.get("version"), f"{where}.version")
         if version is not None and AGENTS[name].install.version_args is None:
-            # The agent's installer cannot select a version (e.g. copilot pins via a
-            # VERSION env var, not argv). Honoring the pin is impossible, so the
-            # store's recorded version would never match it -- the run path would
-            # rebuild the store on every launch. Reject the pin instead of looping.
+            # Pinning is unsupported for this agent (see InstallRecipe.version_args):
+            # the store's recorded version would never match the pin, so the run
+            # path would rebuild the store on every launch. Reject it instead.
             raise ConfigError(
                 f"{where}.version: {name!r} does not support version pinning; "
                 f"remove the version pin"

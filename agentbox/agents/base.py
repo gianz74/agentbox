@@ -20,8 +20,8 @@ Three small pieces make it up:
   claude's hook houses the whole MCP/IDE bridge; an agent with no editor
   integration has no hook.
 * :class:`Agent` -- the declarative identity/data (name, command, recipe, env
-  surface, default mounts) plus the two behavioral seams: ``disable_self_update``
-  and the optional ``launch_hook``.
+  surface, default mounts) plus two optional behavioral seams:
+  ``disable_self_update`` and ``launch_hook``.
 """
 
 from __future__ import annotations
@@ -45,7 +45,11 @@ class InstallRecipe:
     ``~/.local``. ``binary_rel`` locates the installed launcher under the store
     root; ``payload_rel`` the versioned payload tree (``None`` for a lone
     binary). ``version_args``, when set, maps a requested version string to the
-    installer's extra argv that pins it.
+    installer's extra argv that pins it. ``None`` means pinning is unsupported:
+    either the installer cannot take a pin on argv, or the store cannot report the
+    installed version back to the freshness check (any lone binary --
+    ``store.installed_version`` returns ``"unknown"``), so a pin would never
+    converge. Config parsing rejects a pin for such an agent.
     """
 
     url: str
@@ -100,14 +104,14 @@ class LaunchHook(ABC):
         """
 
 
-class Agent(ABC):
+class Agent:
     """A built-in, name-selected agent.
 
     Subclasses set the declarative attributes (identity, install recipe, env
-    surface, default mounts) and implement :meth:`disable_self_update`; an agent
-    with an editor bridge also overrides :attr:`launch_hook`. The shared install
-    *procedure* is agent-neutral and driven by :attr:`install`; subclasses never
-    reimplement it.
+    surface, default mounts); an agent with a store-side self-update freeze
+    overrides :meth:`disable_self_update`, and one with an editor bridge overrides
+    :attr:`launch_hook`. The shared install *procedure* is agent-neutral and
+    driven by :attr:`install`; subclasses never reimplement it.
     """
 
     #: Registry key and per-agent store subdirectory, e.g. ``"claude"``.
@@ -129,13 +133,12 @@ class Agent(ABC):
     #: override a key if they really mean to.
     runtime_env: tuple[tuple[str, str], ...] = ()
 
-    @abstractmethod
     def disable_self_update(self, store: Path) -> None:
         """Freeze the store's own copy so it cannot self-update at runtime.
 
-        Some agents freeze via a runtime env knob (see :attr:`runtime_env`) and a
-        read-only store rather than a store-side file; for those this is a
-        documented no-op.
+        A no-op by default: most agents freeze via a runtime env knob (see
+        :attr:`runtime_env`) plus the read-only store, with nothing to write into
+        the store at install time.
         """
 
     @property
