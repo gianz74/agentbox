@@ -170,7 +170,7 @@ def test_shim_guidance_quotes_paths_with_spaces(tmp_path):
 
 def test_report_shim_prints_and_signals(tmp_path, capsys):
     entry = _exe(tmp_path / "venv" / "bin" / "box")
-    shim = _exe(tmp_path / "bin" / "claude", target=entry)
+    _exe(tmp_path / "bin" / "claude", target=entry)
 
     ok = preflight.resolve_shim(
         CMD, str(tmp_path / "bin"), home=str(tmp_path), wrapper_entry=entry

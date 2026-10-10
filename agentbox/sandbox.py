@@ -293,4 +293,4 @@ def run(spec: SandboxSpec, *, ports=(), gateway: str | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="box-etc.") as etc_dir:
         inner = build_argv(spec, etc_dir=etc_dir)
         argv = net.wrap_argv(inner, gateway=gw, ports=ports)
-        return subprocess.run(argv).returncode
+        return subprocess.run(argv, check=False).returncode

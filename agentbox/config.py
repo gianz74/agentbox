@@ -145,7 +145,7 @@ class Config:
     forward: tuple[str, ...] = ()
 
 
-def agent_version(config: "Config | None", agent_name: str) -> str | None:
+def agent_version(config: Config | None, agent_name: str) -> str | None:
     """The pinned version for *agent_name* from ``[agents.<name>].version``, or
     ``None`` when there is no config, no such ``[agents.<name>]`` table, or no
     pin (latest at setup time)."""

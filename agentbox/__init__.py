@@ -16,15 +16,15 @@ Module layout:
 """
 
 __all__ = [
+    "agents",
     "cli",
     "config",
     "mounts",
-    "sandbox",
     "net",
-    "agents",
-    "store",
     "preflight",
     "run",
+    "sandbox",
+    "store",
 ]
 
 __version__ = "0.0.1"

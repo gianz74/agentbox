@@ -19,11 +19,8 @@ import signal
 import subprocess
 import sys
 
-import pytest
-
 from agentbox.agents import claude
 from agentbox.sandbox import Bind
-
 
 # --- sse_port_from_env --------------------------------------------------------
 
@@ -259,7 +256,8 @@ def test_bootstrap_patches_lockfile_and_execs(tmp_path):
     fake_claude.chmod(0o755)
 
     rc = subprocess.run(
-        [sys.executable, "-c", claude._BOOTSTRAP, str(lock), str(fake_claude), "--print", "x"]
+        [sys.executable, "-c", claude._BOOTSTRAP, str(lock), str(fake_claude), "--print", "x"],
+        check=False,
     ).returncode
     assert rc == 0
     assert marker.read_text() == "--print x"  # claude was exec'd with its args

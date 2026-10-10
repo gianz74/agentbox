@@ -71,7 +71,7 @@ _SCHEME_DEFAULT_PORTS = {"http": 80, "https": 443}
 # --- SSE port ----------------------------------------------------------------
 
 
-def sse_port_from_env(env: "os._Environ[str] | dict[str, str] | None" = None) -> int | None:
+def sse_port_from_env(env: os._Environ[str] | dict[str, str] | None = None) -> int | None:
     """The IDE SSE port from ``CLAUDE_CODE_SSE_PORT``, or ``None`` if unset/invalid.
 
     The IDE exports it when launching ``claude``; the wrapper reads it from its

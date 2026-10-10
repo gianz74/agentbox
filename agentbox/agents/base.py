@@ -142,6 +142,6 @@ class Agent:
         """
 
     @property
-    def launch_hook(self) -> "LaunchHook | None":
+    def launch_hook(self) -> LaunchHook | None:
         """The agent's launch hook, or ``None`` when it needs none (the default)."""
         return None

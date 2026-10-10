@@ -17,7 +17,6 @@ from agentbox.agents.base import Agent, InstallRecipe
 from agentbox.agents.copilot import CopilotAgent
 from agentbox.config import MountSpec
 
-
 # --- registry -----------------------------------------------------------------
 
 def test_registry_exposes_copilot():

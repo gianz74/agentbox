@@ -18,7 +18,6 @@ from agentbox.agents.claude import ClaudeAgent, ClaudeLaunchHook
 from agentbox.config import MountSpec
 from agentbox.sandbox import Bind
 
-
 # --- registry -----------------------------------------------------------------
 
 def test_registry_exposes_claude():

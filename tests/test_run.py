@@ -6,7 +6,7 @@ locks in the pure env logic, which is parameterized by the agent.)
 """
 
 import os
-
+from pathlib import Path
 from types import SimpleNamespace
 
 from agentbox.agents import AGENTS
@@ -114,15 +114,15 @@ def test_ensure_default_mount_sources_seeds_json_file_mounts(tmp_path):
     assert os.path.isdir(os.path.join(home, ".claude"))
     cfg = os.path.join(home, ".claude.json")
     assert os.path.isfile(cfg)
-    assert open(cfg).read().strip() == "{}"
+    assert Path(cfg).read_text().strip() == "{}"
 
 
 def test_ensure_default_mount_sources_never_clobbers_existing(tmp_path):
     home = str(tmp_path)
     cfg = os.path.join(home, ".claude.json")
-    open(cfg, "w").write('{"keep": 1}')
+    Path(cfg).write_text('{"keep": 1}')
     ensure_default_mount_sources(CLAUDE, home)
-    assert open(cfg).read() == '{"keep": 1}'  # existing config left untouched
+    assert Path(cfg).read_text() == '{"keep": 1}'  # existing config left untouched
 
 
 def test_ensure_default_mount_sources_leaves_a_dangling_symlink_alone(tmp_path):
@@ -154,4 +154,4 @@ def test_ensure_default_mount_sources_honors_declared_kind_over_the_name(tmp_pat
     assert os.path.isdir(os.path.join(home, ".config.d"))
     netrc = os.path.join(home, ".netrc")
     assert os.path.isfile(netrc)
-    assert open(netrc).read() == "machine example\n"
+    assert Path(netrc).read_text() == "machine example\n"
