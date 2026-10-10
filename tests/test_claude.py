@@ -119,13 +119,13 @@ def test_loopback_ports_multiple_servers_deduped_in_order():
     assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 6000]
 
 
-def test_loopback_ports_accepts_all_loopback_spellings():
+def test_loopback_ports_accepts_ipv4_loopback_spellings_only():
     cfg = _inline({
         "a": {"url": "http://localhost:5000/"},
         "b": {"url": "http://127.0.0.1:5001/"},
-        "c": {"url": "http://[::1]:5002/"},
+        "c": {"url": "http://[::1]:5002/"},  # sandbox is IPv4-only -> dropped
     })
-    assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 5001, 5002]
+    assert claude.loopback_mcp_ports(["--mcp-config", cfg]) == [5000, 5001]
 
 
 def test_loopback_ports_scheme_default_when_absent():
@@ -171,10 +171,10 @@ def test_loopback_ports_none_without_mcp_config():
 
 # --- base_url_port ------------------------------------------------------------
 
-def test_base_url_port_reads_loopback_spellings():
+def test_base_url_port_reads_ipv4_loopback_spellings_only():
     assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://127.0.0.1:4000"}) == 4000
     assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://localhost:4000/v1"}) == 4000
-    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://[::1]:4000"}) == 4000
+    assert claude.base_url_port({"ANTHROPIC_BASE_URL": "http://[::1]:4000"}) is None
 
 
 def test_base_url_port_scheme_default_when_absent():
@@ -272,7 +272,7 @@ def test_configured_mcp_ports_dedupes_first_seen_order(tmp_path):
     assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [8080, 3000, 4000, 5000]
 
 
-def test_configured_mcp_ports_skips_non_loopback(tmp_path):
+def test_configured_mcp_ports_skips_unforwardable_hosts(tmp_path):
     home, cwd = tmp_path / "home", tmp_path / "work"
     cwd.mkdir()
     _write_config(home, _servers(
@@ -281,7 +281,7 @@ def test_configured_mcp_ports_skips_non_loopback(tmp_path):
         "http://[::1]:6000/mcp",
         "https://localhost/mcp",
     ))
-    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [6000, 443]
+    assert claude.configured_mcp_ports(str(home), str(cwd), {}) == [443]
 
 
 def test_configured_mcp_ports_missing_or_malformed_config_is_empty(tmp_path):

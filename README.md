@@ -36,7 +36,8 @@ list them under `[[mounts]]`.
   closed by default (`-T none`, `-U none`). The only exceptions are the exact TCP
   loopback ports an agent's launch hook names (`-T <port>`; for claude, the IDE
   bridge port and loopback MCP servers/gateway from its config or
-  `--mcp-config`). UDP is never forwarded.
+  `--mcp-config`). UDP is never forwarded. The sandbox network is IPv4-only
+  (`-4`), so `[::1]` URLs do not work inside; use `localhost` or `127.0.0.1`.
 * **Frozen store.** `box <agent> setup` performs a real native install of the
   agent's CLI, redirected into a wrapper-private store at
   `~/.local/share/box/<agent>/store`, with self-update disabled. The store is

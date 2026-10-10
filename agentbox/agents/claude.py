@@ -44,6 +44,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..config import MountSpec
+from ..net import LOOPBACK_HOSTS
 from ..sandbox import Bind
 from .base import Agent, InstallRecipe, LaunchHook, LaunchPlan
 
@@ -64,11 +65,6 @@ MCP_STAGE_DIR = "/run/box/mcp"
 
 _MCP_FLAG = "--mcp-config"
 _MCP_FLAG_EQ = "--mcp-config="
-
-#: Hostnames whose MCP ports are safe to forward: the loopback the editor's own
-#: servers bind. A non-loopback host (a LAN/public address) is never forwarded --
-#: doing so would breach the host-localhost isolation the sandbox enforces.
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 #: Port assumed for an MCP URL that names none, keyed by scheme.
 _SCHEME_DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -196,10 +192,12 @@ def _read_text(path: str) -> str | None:
 
 
 def _loopback_port(url) -> int | None:
-    """The port of *url* when its host is loopback, else ``None``.
+    """The port of *url* when its host is a forwardable loopback, else ``None``.
 
-    Falls back to the scheme's default port when the URL names none; ``None`` for
-    a non-loopback host, an unparseable URL, or a port outside ``1..65535``.
+    Forwardable means one of :data:`~agentbox.net.LOOPBACK_HOSTS` -- so not
+    ``::1``, which the IPv4-only sandbox cannot reach. Falls back to the scheme's
+    default port when the URL names none; ``None`` for any other host, an
+    unparseable URL, or a port outside ``1..65535``.
     """
     if not isinstance(url, str):
         return None
@@ -209,7 +207,9 @@ def _loopback_port(url) -> int | None:
         port = parsed.port
     except ValueError:
         return None
-    if host is None or host.lower() not in _LOOPBACK_HOSTS:
+    # A non-loopback host (LAN/public) is never forwarded: that would breach the
+    # host-localhost isolation the sandbox enforces. ``::1`` is dropped too.
+    if host is None or host.lower() not in LOOPBACK_HOSTS:
         return None
     if port is None:
         port = _SCHEME_DEFAULT_PORTS.get(parsed.scheme)
@@ -222,9 +222,9 @@ def loopback_mcp_ports(claude_args) -> list[int]:
     """The deduped host-loopback ports named in *claude_args*' ``--mcp-config``.
 
     Each operand (inline JSON or a real file's contents) is parsed and every
-    ``mcpServers.<name>.url`` inspected; the port of each loopback URL is
-    collected in first-seen order. Operands that do not parse, are not objects,
-    or name a non-loopback host are skipped silently -- claude validates its own
+    ``mcpServers.<name>.url`` inspected; the port of each forwardable loopback
+    URL is collected in first-seen order. Operands that do not parse, are not
+    objects, or name another host are skipped silently -- claude validates its own
     config, and forwarding a non-loopback port would breach host-localhost
     isolation.
     """

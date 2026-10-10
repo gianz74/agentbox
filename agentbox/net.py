@@ -21,6 +21,16 @@ Network posture:
   host's loopback, one per port the agent's launch hook names. With no ports,
   ``-T none`` closes TCP, because pasta's default ``auto`` would forward
   **every** host-loopback port.
+* ``-4`` always: the sandbox network is IPv4-only. pasta's ``-T`` cannot bind a
+  single family (it rejects a listen address), so without ``-4`` it listens on
+  both ``127.0.0.1`` and ``::1`` for every forwarded port and splices each family
+  to the host's same-family loopback. A host service bound to IPv4 only then
+  has its ``::1`` connect *accepted* inside and reset once the host refuses --
+  and clients that race both loopbacks for ``localhost`` (Bun, curl) take the
+  accepted ``::1`` and never fall back. With ``-4`` that connect is refused, as
+  on the host, and ``127.0.0.1`` wins. The cost: no IPv6 for the sandbox at all,
+  so a ``[::1]`` URL fails inside however the host service binds -- which is why
+  :data:`LOOPBACK_HOSTS` omits it.
 * ``-U none`` always. Agents need no UDP to the host loopback (MCP and gateways are
   TCP); it also stops pasta mirroring UDP for each named TCP port.
 
@@ -35,6 +45,10 @@ import subprocess
 
 PASTA = "pasta"
 _PASTA_PACKAGE = "passt"
+
+#: Host names that reach a forwarded port from inside the sandbox. No ``::1``:
+#: under ``-4`` nothing listens there, so forwarding a ``[::1]`` URL's port is moot.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
 
 class NetworkError(Exception):
@@ -79,7 +93,7 @@ def wrap_argv(
 ) -> list[str]:
     """Wrap *inner_argv* (the sandbox command) so ``pasta`` is its parent.
 
-    Builds ``pasta --config-net -f -q --no-map-gw --dns-forward <gateway> -U none
+    Builds ``pasta -4 --config-net -f -q --no-map-gw --dns-forward <gateway> -U none
     (-T none | -T <port>...) -- <inner_argv...>``: pasta sets up the isolated
     netns, then runs the sandbox inside it. *ports* is the iterable of
     host-loopback ports to forward (those the agent's launch hook names);
@@ -90,6 +104,7 @@ def wrap_argv(
     """
     argv = [
         PASTA,
+        "-4",
         "--config-net",
         "-f",
         "-q",

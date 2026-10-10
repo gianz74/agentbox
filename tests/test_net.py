@@ -1,6 +1,6 @@
 """Tests for the pasta network plumbing (pure argv assembly).
 
-  * ``wrap_argv``: the fixed pasta preamble (incl. ``-U none``), and one ``-T`` per
+  * ``wrap_argv``: the fixed pasta preamble (incl. ``-4`` and ``-U none``), and one ``-T`` per
     distinct forwarded port -- in first-seen order, with ``None`` entries and
     duplicates dropped -- or ``-T none`` when no port remains.
 
@@ -12,7 +12,7 @@ from agentbox import net
 
 GW = "10.0.2.2"
 _PREAMBLE = [
-    "pasta", "--config-net", "-f", "-q", "--no-map-gw", "--dns-forward", GW,
+    "pasta", "-4", "--config-net", "-f", "-q", "--no-map-gw", "--dns-forward", GW,
     "-U", "none",
 ]
 

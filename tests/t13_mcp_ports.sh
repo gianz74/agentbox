@@ -17,9 +17,13 @@
 #     and is the only port forwarded -- and answers inside,
 #   - a launch forwarding no ports leaves a live host-loopback port unreachable:
 #     pasta gets `-T none -U none`, not its default `auto` (every loopback port).
-# The two extra launches each use a fake home, so the real ~/.claude.json is
+# Every HTTP server binds IPv4 only (like Ghidra's Java MCP server), so each
+# `localhost` probe also proves pasta's `-4`: curl, like claude's runtime, races
+# ::1 and 127.0.0.1, and without `-4` the ::1 connect is accepted inside and then
+# reset, since nothing serves the host's ::1.
+# The extra launches each use a fake home, so the real ~/.claude.json is
 # never read. The pure logic (port extraction across inline JSON / file operands /
-# localhost|127.0.0.1|::1 / scheme-default ports / malformed+non-loopback skips,
+# localhost|127.0.0.1 (not ::1) / scheme-default ports / malformed+non-loopback skips,
 # configured_mcp_ports over the global config's top-level and per-project
 # `mcpServers`, and wrap_argv's one-deduped-`-T`-per-port, `-T none` when there
 # are none, and `-U none` always) is covered first by the unit suite.
@@ -151,24 +155,15 @@ SSE_SRC = (
     "class S(socketserver.ThreadingTCPServer):allow_reuse_address=True\n"
     "S(('127.0.0.1',P),H).serve_forever()\n"
 )
-# Dual-stack (V6ONLY off) so it answers on both loopback families. `localhost`
-# resolves to ::1 or 127.0.0.1 depending on the host's gai ordering, and pasta
-# forwards each family to the host's same-family loopback -- a real local MCP
-# server likewise answers on whichever loopback the client picks.
 HTTP_SRC = (
-    "import sys,socket,http.server,socketserver\n"
+    "import sys,http.server,socketserver\n"
     "P=int(sys.argv[1])\n"
     "class H(http.server.BaseHTTPRequestHandler):\n"
     " def log_message(self,*a):pass\n"
     " def do_GET(self):\n"
     "  self.send_response(200);self.end_headers();self.wfile.write(b'mcp-ok')\n"
-    "class S(socketserver.ThreadingTCPServer):\n"
-    " address_family=socket.AF_INET6\n"
-    " allow_reuse_address=True\n"
-    " def server_bind(self):\n"
-    "  self.socket.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,0)\n"
-    "  socketserver.ThreadingTCPServer.server_bind(self)\n"
-    "S(('::',P),H).serve_forever()\n"
+    "class S(socketserver.ThreadingTCPServer):allow_reuse_address=True\n"
+    "S(('127.0.0.1',P),H).serve_forever()\n"
 )
 
 # Record the ports each launch hands to pasta, so a check can tell an empty
