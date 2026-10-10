@@ -7,7 +7,8 @@
     ``.claude.json``, preserving any existing keys and surviving a corrupt file,
   * ``ClaudeLaunchHook.prepare`` composes the MCP/IDE bridge into a
     :class:`LaunchPlan`: plain exec with no IDE, the bootstrap wrapper + forwarded
-    ports with one, and ``--mcp-config`` file staging.
+    ports with one, ``--mcp-config`` file staging, and the loopback MCP ports of
+    the global ``.claude.json`` (after the command-line ones).
 """
 
 import json
@@ -101,7 +102,8 @@ def test_prepare_plain_without_ide(tmp_path):
         exec_path="/h/.local/bin/claude",
         agent_args=["-p", "hi"],
         home="/h",
-        host_env={"TERM": "xterm"},
+        cwd=str(tmp_path),
+        env={"TERM": "xterm"},
         hook_stage=str(tmp_path),
     )
     assert isinstance(plan, LaunchPlan)
@@ -115,7 +117,8 @@ def test_prepare_wraps_bootstrap_and_forwards_sse_port(tmp_path):
         exec_path="/h/.local/bin/claude",
         agent_args=["-p", "hi"],
         home="/h",
-        host_env={"CLAUDE_CODE_SSE_PORT": "4321"},
+        cwd=str(tmp_path),
+        env={"CLAUDE_CODE_SSE_PORT": "4321"},
         hook_stage=str(tmp_path),
     )
     # The IDE SSE port is forwarded and the exec wraps the lockfile bootstrap.
@@ -135,7 +138,8 @@ def test_prepare_stages_mcp_config_and_collects_ports(tmp_path):
         exec_path="/h/.local/bin/claude",
         agent_args=["--mcp-config", str(cfg), "--print"],
         home="/h",
-        host_env={"CLAUDE_CODE_SSE_PORT": "4321"},
+        cwd=str(tmp_path),
+        env={"CLAUDE_CODE_SSE_PORT": "4321"},
         hook_stage=str(stage),
     )
 
@@ -151,7 +155,8 @@ def test_prepare_forwards_loopback_base_url_port(tmp_path):
         exec_path="/h/.local/bin/claude",
         agent_args=["-p", "hi"],
         home="/h",
-        host_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:4000"},
+        cwd=str(tmp_path),
+        env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:4000"},
         hook_stage=str(tmp_path),
     )
     # A local Anthropic-compatible gateway's loopback port is forwarded; with no
@@ -165,7 +170,8 @@ def test_prepare_does_not_forward_remote_base_url(tmp_path):
         exec_path="/h/.local/bin/claude",
         agent_args=["-p", "hi"],
         home="/h",
-        host_env={"ANTHROPIC_BASE_URL": "https://api.anthropic.com"},
+        cwd=str(tmp_path),
+        env={"ANTHROPIC_BASE_URL": "https://api.anthropic.com"},
         hook_stage=str(tmp_path),
     )
     assert plan.ports == ()
@@ -176,7 +182,8 @@ def test_prepare_orders_sse_then_base_url(tmp_path):
         exec_path="/h/.local/bin/claude",
         agent_args=["-p", "hi"],
         home="/h",
-        host_env={
+        cwd=str(tmp_path),
+        env={
             "CLAUDE_CODE_SSE_PORT": "4321",
             "ANTHROPIC_BASE_URL": "http://localhost:4000",
         },
@@ -184,3 +191,48 @@ def test_prepare_orders_sse_then_base_url(tmp_path):
     )
     # Forwarded order mirrors the tuple build: SSE, then the base-url gateway port.
     assert plan.ports == (4321, 4000)
+
+
+def _home_with_servers(tmp_path, *urls):
+    home = tmp_path / "home"
+    home.mkdir()
+    servers = {f"s{i}": {"type": "http", "url": u} for i, u in enumerate(urls)}
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": servers}))
+    return home
+
+
+def test_prepare_forwards_configured_mcp_port(tmp_path):
+    home = _home_with_servers(tmp_path, "http://localhost:8080/mcp")
+    work = tmp_path / "work"
+    work.mkdir()
+
+    plan = ClaudeLaunchHook().prepare(
+        exec_path="/h/.local/bin/claude",
+        agent_args=["-p", "hi"],
+        home=str(home),
+        cwd=str(work),
+        env={},
+        hook_stage=str(tmp_path),
+    )
+    # A loopback server in the global config is forwarded with no CLI flag.
+    assert plan.ports == (8080,)
+    assert plan.entry_argv == ("/h/.local/bin/claude", "-p", "hi")
+
+
+def test_prepare_orders_cli_ports_before_config(tmp_path):
+    home = _home_with_servers(tmp_path, "http://localhost:8080/mcp")
+    cfg = tmp_path / "servers.json"
+    cfg.write_text(json.dumps({"mcpServers": {"t": {"url": "http://127.0.0.1:7000/mcp"}}}))
+    stage = tmp_path / "stage"
+    stage.mkdir()
+
+    plan = ClaudeLaunchHook().prepare(
+        exec_path="/h/.local/bin/claude",
+        agent_args=["--mcp-config", str(cfg)],
+        home=str(home),
+        cwd=str(tmp_path),
+        env={"CLAUDE_CODE_SSE_PORT": "4321"},
+        hook_stage=str(stage),
+    )
+    # SSE, then --mcp-config, then the config file.
+    assert plan.ports == (4321, 7000, 8080)

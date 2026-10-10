@@ -2,16 +2,21 @@
 onto the universal baseline, scope precedence, and the identity/launcher drop.
 
 (The launch itself is pasta-fronted and covered by the integration drivers; this
-locks in the pure env logic, which is parameterized by the agent.)
+locks in the pure env logic, which is parameterized by the agent, plus the
+launch-hook wiring with the sandbox stubbed.)
 """
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
+from agentbox import net
+from agentbox import run as run_mod
 from agentbox.agents import AGENTS
 from agentbox.config import MountSpec, parse_config
 from agentbox.run import build_env, ensure_default_mount_sources
+from agentbox.store import StoreLaunch
 
 CLAUDE = AGENTS["claude"]
 COPILOT = AGENTS["copilot"]
@@ -155,3 +160,59 @@ def test_ensure_default_mount_sources_honors_declared_kind_over_the_name(tmp_pat
     netrc = os.path.join(home, ".netrc")
     assert os.path.isfile(netrc)
     assert Path(netrc).read_text() == "machine example\n"
+
+
+# --- launch hook wiring -------------------------------------------------------
+
+
+def _servers_config(directory, port):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {"g": {"type": "http", "url": f"http://localhost:{port}/mcp"}}}))
+
+
+def _forwarded(tmp_path, monkeypatch, *, cwd, home, config=None):
+    """The ``-T`` operands pasta gets for a stubbed claude launch."""
+    monkeypatch.setattr(run_mod, "ensure_store", lambda *a, **k: tmp_path / "store")
+    monkeypatch.setattr(run_mod, "store_launch", lambda *a, **k: StoreLaunch(
+        binds=(), path="/usr/bin", exec_path="/s/claude"))
+    captured = {}
+
+    def fake_run(spec, *, ports=(), gateway=None):
+        captured["argv"] = net.wrap_argv(["X"], gateway="10.0.2.2", ports=ports)
+        return 0
+
+    monkeypatch.setattr(run_mod.sandbox, "run", fake_run)
+    assert run_mod.run(CLAUDE, config=parse_config(config or {}), cwd=cwd,
+                       home=str(home), env={}) == 0
+    argv = captured["argv"]
+    return [argv[i + 1] for i, tok in enumerate(argv) if tok == "-T"]
+
+
+def test_run_forwards_configured_mcp_port_to_pasta(tmp_path, monkeypatch):
+    home, work = tmp_path / "home", tmp_path / "work"
+    _servers_config(home, 8080)
+    work.mkdir()
+    # No --mcp-config: the port comes from the fake home's .claude.json alone.
+    assert _forwarded(tmp_path, monkeypatch, cwd=str(work), home=home) == ["8080"]
+
+
+def test_run_hands_the_hook_the_normalized_cwd(tmp_path, monkeypatch):
+    home, work = tmp_path / "home", tmp_path / "work"
+    work.mkdir()
+    home.mkdir()
+    (home / ".claude.json").write_text(json.dumps({"projects": {str(work): {
+        "mcpServers": {"g": {"url": "http://localhost:9000/mcp"}}}}}))
+    # A trailing slash on the launch cwd still matches the projects key.
+    assert _forwarded(tmp_path, monkeypatch, cwd=str(work) + "/", home=home) == ["9000"]
+
+
+def test_run_hook_honours_config_env_claude_config_dir(tmp_path, monkeypatch):
+    home, alt, work = tmp_path / "home", tmp_path / "alt", tmp_path / "work"
+    _servers_config(home, 1111)
+    _servers_config(alt, 2222)
+    work.mkdir()
+    # CLAUDE_CONFIG_DIR set only by config.toml [env] -- the env claude runs with.
+    config = {"env": {"CLAUDE_CONFIG_DIR": str(alt)}}
+    assert _forwarded(tmp_path, monkeypatch, cwd=str(work), home=home,
+                      config=config) == ["2222"]

@@ -249,7 +249,8 @@ def run(
                 exec_path=sl.exec_path,
                 agent_args=tuple(agent_args),
                 home=h,
-                host_env=host_env,
+                cwd=resolution.cwd,
+                env=setenv,
                 hook_stage=hook_stage,
             )
         else:

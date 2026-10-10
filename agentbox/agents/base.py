@@ -91,14 +91,18 @@ class LaunchHook(ABC):
         exec_path: str,
         agent_args,
         home: str,
-        host_env,
+        cwd: str,
+        env,
         hook_stage: str,
     ) -> LaunchPlan:
         """Assemble this agent's launch contribution.
 
         *exec_path* is the absolute in-sandbox path of the store binary;
         *agent_args* the user's CLI arguments; *home* the in-sandbox ``$HOME``;
-        *host_env* the launcher's environment; *hook_stage* a writable host
+        *cwd* the normalized working directory the sandbox starts in (the same
+        path on the host, by parity); *env* the environment the agent runs with
+        (the host-forwarded baseline plus the config's ``[env]`` scopes), so the
+        hook sees exactly what the agent will; *hook_stage* a writable host
         directory (bound into the sandbox by the returned binds) the hook may
         stage files into.
         """

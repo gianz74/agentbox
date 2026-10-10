@@ -441,9 +441,11 @@ class ClaudeLaunchHook(LaunchHook):
     :meth:`prepare` stages any ``--mcp-config`` files into *hook_stage*, wraps the
     exec in the lockfile-reconciling bootstrap when the editor exported an SSE
     port, and reports every host-loopback port pasta must forward (the SSE/ws port,
-    any streamable-HTTP MCP server ports the ``--mcp-config`` operands name, and a
-    loopback ``ANTHROPIC_BASE_URL`` port). A non-IDE launch with no local gateway
-    returns the plain command with no extra binds or ports.
+    any streamable-HTTP MCP server ports the ``--mcp-config`` operands name, a
+    loopback ``ANTHROPIC_BASE_URL`` port, and the loopback MCP servers of the
+    global config -- see :func:`configured_mcp_ports`). A non-IDE launch with no
+    local gateway and no loopback server in the config returns the plain command
+    with no extra binds or ports.
     """
 
     def prepare(
@@ -452,15 +454,21 @@ class ClaudeLaunchHook(LaunchHook):
         exec_path: str,
         agent_args,
         home: str,
-        host_env,
+        cwd: str,
+        env,
         hook_stage: str,
     ) -> LaunchPlan:
-        sse_port = sse_port_from_env(host_env)
+        sse_port = sse_port_from_env(env)
         staged_args, binds = stage_mcp_configs(agent_args, hook_stage)
         entry = entry_argv(exec_path, staged_args, home=home, sse_port=sse_port)
         ports = tuple(
             p
-            for p in (sse_port, base_url_port(host_env), *loopback_mcp_ports(agent_args))
+            for p in (
+                sse_port,
+                base_url_port(env),
+                *loopback_mcp_ports(agent_args),
+                *configured_mcp_ports(home, cwd, env),
+            )
             if p is not None
         )
         return LaunchPlan(entry_argv=entry, binds=binds, ports=ports)
