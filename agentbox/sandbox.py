@@ -274,8 +274,8 @@ def run(spec: SandboxSpec, *, ports=(), gateway: str | None = None) -> int:
     """Boot the sandbox for *spec* under an isolated network and wait for it.
 
     ``pasta`` is the parent: it creates the isolated network namespace (outbound
-    NAT + DNS forwarding, forwarding each host-loopback port in *ports* -- the IDE
-    SSE port plus any MCP server ports), then spawns the ``bwrap`` sandbox inside
+    NAT + DNS forwarding, forwarding each host-loopback port in *ports* -- those
+    the agent's launch hook names), then spawns the ``bwrap`` sandbox inside
     it. The synthesized ``resolv.conf`` is pointed at pasta's gateway. Returns the
     sandbox process's exit code.
     """

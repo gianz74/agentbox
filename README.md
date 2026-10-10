@@ -31,9 +31,12 @@ list them under `[[mounts]]`.
 
 * **pasta is the parent and spawns bwrap.** pasta creates the network + user
   namespace and configures NAT/DNS; bwrap shares that netns and unshares
-  everything else. The gateway address is *not* mapped to the host
-  (`--no-map-gw`), so the guest cannot reach host-localhost services — except the
-  exact loopback ports an editor bridge asks pasta to forward (`-T`).
+  everything else. The guest cannot reach host-localhost services: the gateway
+  is not mapped to the host (`--no-map-gw`) and pasta's loopback forwarding is
+  closed by default (`-T none`, `-U none`). The only exceptions are the exact TCP
+  loopback ports an agent's launch hook names (`-T <port>`; for claude, the IDE
+  bridge port and loopback MCP servers/gateway from its config or
+  `--mcp-config`). UDP is never forwarded.
 * **Frozen store.** `box <agent> setup` performs a real native install of the
   agent's CLI, redirected into a wrapper-private store at
   `~/.local/share/box/<agent>/store`, with self-update disabled. The store is

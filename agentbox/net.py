@@ -11,14 +11,18 @@ Network posture:
 * ``--no-map-gw`` is mandatory. Without it pasta maps the gateway address back to
   the host, so the sandbox could reach every host-localhost service via
   ``http://<gateway>:<port>`` -- the exact isolation the wrapper exists to prevent.
+  It closes the *gateway* path only; namespace-loopback forwarding is a separate
+  pasta mechanism (``-T``/``-U``), handled below.
 * ``--dns-forward <gateway>`` makes pasta answer DNS on the gateway address and
   forward to the host's real resolver, which is what the synthesized
   ``/etc/resolv.conf`` points at. This works even when the host uses a loopback
   stub resolver (otherwise unreachable from inside the namespace).
 * ``-T <port>`` forwards a single port from the namespace loopback out to the
-  host's loopback. One is emitted per host-loopback MCP port the editor named (the
-  SSE/ws port plus any streamable-HTTP MCP servers), so the sandbox reaches the
-  editor's local servers without exposing any other host service.
+  host's loopback, one per port the agent's launch hook names. With no ports,
+  ``-T none`` closes TCP, because pasta's default ``auto`` would forward
+  **every** host-loopback port.
+* ``-U none`` always. Agents need no UDP to the host loopback (MCP and gateways are
+  TCP); it also stops pasta mirroring UDP for each named TCP port.
 
 ``--die-with-parent`` on the sandbox plus pasta's foreground mode (``-f``) make
 pasta exit when the (ephemeral) sandbox does.
@@ -75,12 +79,14 @@ def wrap_argv(
 ) -> list[str]:
     """Wrap *inner_argv* (the sandbox command) so ``pasta`` is its parent.
 
-    Builds ``pasta --config-net -f -q --no-map-gw --dns-forward <gateway>
-    [-T <port>]... -- <inner_argv...>``: pasta sets up the isolated netns, then
-    runs the sandbox inside it. *ports* is the iterable of host-loopback ports to
-    forward (the IDE SSE port plus any MCP server ports); one ``-T`` is emitted per
-    distinct port, in first-seen order, with ``None`` entries and duplicates
-    dropped.
+    Builds ``pasta --config-net -f -q --no-map-gw --dns-forward <gateway> -U none
+    (-T none | -T <port>...) -- <inner_argv...>``: pasta sets up the isolated
+    netns, then runs the sandbox inside it. *ports* is the iterable of
+    host-loopback ports to forward (those the agent's launch hook names);
+    one ``-T`` is emitted per distinct port, in first-seen order, with ``None``
+    entries and duplicates dropped. pasta's ``-T``/``-U`` default is ``auto``,
+    which forwards every host-loopback port, so when no port survives the
+    absence is made explicit with ``-T none``.
     """
     argv = [
         PASTA,
@@ -90,6 +96,8 @@ def wrap_argv(
         "--no-map-gw",
         "--dns-forward",
         gateway,
+        "-U",
+        "none",
     ]
     seen: set[int] = set()
     for port in ports:
@@ -97,5 +105,7 @@ def wrap_argv(
             continue
         seen.add(port)
         argv += ["-T", str(port)]
+    if not seen:
+        argv += ["-T", "none"]
     argv += ["--", *inner_argv]
     return argv
